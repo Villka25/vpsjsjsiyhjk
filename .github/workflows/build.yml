@@ -1,0 +1,37 @@
+name: 'Deploy Game Server on GitHub Actions VPS'
+
+on:
+  workflow_dispatch:  # Ручной запуск из интерфейса GitHub
+  schedule:
+    - cron: '*/30 8-20 * * *' # Пример: запуск каждые 30 минут в рабочие часы
+  # push:               # (Опционально) Запуск при пуше в ветку
+  #   branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest  # Используем мощный бегунок GitHub
+    steps:
+      # 1. Получаем код вашего сервера из репозитория
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Настраиваем туннель для доступа к серверу извне
+      - name: Setup ngrok tunnel
+        run: |
+          wget https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
+          unzip ngrok-stable-linux-amd64.zip
+          ./ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          ./ngrok tcp 7777 &
+          sleep 5
+          echo "NGROK_URL=$(curl -s localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> $GITHUB_ENV
+      
+      # 3. Запускаем ваш игровой сервер в фоновом режиме
+      - name: Run Game Server
+        run: |
+          chmod +x ./path/to/your/server/executable.x86_64
+          ./path/to/your/server/executable.x86_64 -batchmode -nographics -port 7777 &
+          echo "Server started with PID: $!"
+      
+      # 4. Держим задачу активной, пока сервер работает
+      - name: Keep Server Alive
+        run: sleep 6h  # Ждём 6 часов, пока не истечёт лимит бегунка
