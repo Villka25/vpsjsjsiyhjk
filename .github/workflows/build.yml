@@ -1,41 +1,42 @@
 name: Ubuntu GUI Desktop on GitHub Actions
 
 on:
-  workflow_dispatch:  # запуск вручную
+  workflow_dispatch:
 
 jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install desktop environment and VNC server
+      - name: Install desktop and VNC
         run: |
           sudo apt update
           sudo apt install -y xfce4 xfce4-goodies tightvncserver
-          # Установим ngrok
-          wget https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
-          unzip ngrok-stable-linux-amd64.zip
+
+      - name: Install ngrok v3
+        run: |
+          wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+          tar xzf ngrok-v3-stable-linux-amd64.tgz
           sudo mv ngrok /usr/local/bin/
+          rm ngrok-v3-stable-linux-amd64.tgz
 
       - name: Configure VNC password
         run: |
-          # Устанавливаем пароль "secret" (можно изменить, но тогда запомните)
           mkdir -p ~/.vnc
           echo "secret" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-      - name: Start VNC server on display :1
+      - name: Start VNC server
         run: |
           vncserver :1 -geometry 1280x720 -depth 24
-          # Ждём запуска
           sleep 3
 
       - name: Expose VNC via ngrok
         run: |
-          ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
           ngrok tcp 5901 &
           sleep 5
           echo "Public VNC address:"
           curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url'
 
-      - name: Keep runner alive
+      - name: Keep alive
         run: sleep 6h
