@@ -1,4 +1,4 @@
-name: Ubuntu Desktop (via Cloudflare Tunnel)
+name: Ubuntu Desktop (via bore)
 
 on:
   workflow_dispatch:
@@ -12,10 +12,11 @@ jobs:
           sudo apt update
           sudo apt install -y xfce4 xfce4-goodies tightvncserver
 
-      - name: Install cloudflared
+      - name: Install bore
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
+          curl -L -o bore https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-x86_64-unknown-linux-musl
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
 
       - name: Configure VNC password
         run: |
@@ -28,15 +29,12 @@ jobs:
           vncserver :1 -geometry 1280x720 -depth 24
           sleep 3
 
-      - name: Expose VNC via Cloudflare Tunnel
+      - name: Expose VNC via bore
         run: |
-          cloudflared tunnel --url localhost:5901 --protocol tcp &
-
-      - name: Get Cloudflare Tunnel URL
-        run: |
-          sleep 10
-          echo "Your VNC address will be displayed in the logs above (format: tcp://some-name.trycloudflare.com:port)"
-          echo "Connect using any VNC client."
+          bore local 5901 --to bore.pub &
+          sleep 5
+          echo "Connect to: bore.pub:XXXXX (port will appear in logs above)"
+          echo "Run this locally: vncviewer bore.pub:XXXXX"
 
       - name: Keep runner alive
         run: sleep 6h
