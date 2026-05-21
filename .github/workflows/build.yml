@@ -14,9 +14,11 @@ jobs:
 
       - name: Install bore
         run: |
-          curl -L -o bore https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-x86_64-unknown-linux-musl
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
           chmod +x bore
           sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
 
       - name: Configure VNC password
         run: |
