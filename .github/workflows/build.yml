@@ -1,4 +1,4 @@
-name: Ubuntu GUI Desktop on GitHub Actions
+name: Ubuntu Desktop (via Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
@@ -7,17 +7,15 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install desktop and VNC
+      - name: Install Desktop & VNC
         run: |
           sudo apt update
           sudo apt install -y xfce4 xfce4-goodies tightvncserver
 
-      - name: Install ngrok v3
+      - name: Install cloudflared
         run: |
-          wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-          tar xzf ngrok-v3-stable-linux-amd64.tgz
-          sudo mv ngrok /usr/local/bin/
-          rm ngrok-v3-stable-linux-amd64.tgz
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
 
       - name: Configure VNC password
         run: |
@@ -30,13 +28,15 @@ jobs:
           vncserver :1 -geometry 1280x720 -depth 24
           sleep 3
 
-      - name: Expose VNC via ngrok
+      - name: Expose VNC via Cloudflare Tunnel
         run: |
-          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          ngrok tcp 5901 &
-          sleep 5
-          echo "Public VNC address:"
-          curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+          cloudflared tunnel --url localhost:5901 --protocol tcp &
 
-      - name: Keep alive
+      - name: Get Cloudflare Tunnel URL
+        run: |
+          sleep 10
+          echo "Your VNC address will be displayed in the logs above (format: tcp://some-name.trycloudflare.com:port)"
+          echo "Connect using any VNC client."
+
+      - name: Keep runner alive
         run: sleep 6h
