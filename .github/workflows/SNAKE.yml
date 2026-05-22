@@ -1,4 +1,4 @@
-name: Build Snake EXE (Windows)
+name: Build Snake EXE (Windows) + DLLs
 
 on:
   workflow_dispatch:
@@ -10,23 +10,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup vcpkg and install SFML (static with graphics)
+      - name: Setup vcpkg and install SFML (dynamic)
         run: |
           vcpkg integrate install
-          vcpkg install sfml[graphics]:x64-windows-static
+          vcpkg install sfml:x64-windows
 
       - name: Configure CMake
         run: |
           cmake -B build -S . `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Upload EXE artifact
+      - name: Copy required DLLs
+        run: |
+          $bindir = "build/Release"
+          $vcpkgbin = "C:/vcpkg/installed/x64-windows/bin"
+          Copy-Item "$vcpkgbin/sfml-graphics-2.dll" $bindir
+          Copy-Item "$vcpkgbin/sfml-window-2.dll" $bindir
+          Copy-Item "$vcpkgbin/sfml-system-2.dll" $bindir
+          Copy-Item "$vcpkgbin/openal32.dll" $bindir
+          # Если понадобятся ещё DLL, добавим позже
+
+      - name: Upload artifact (EXE + DLLs)
         uses: actions/upload-artifact@v4
         with:
           name: snake-windows
-          path: build/Release/snake.exe
+          path: build/Release/
