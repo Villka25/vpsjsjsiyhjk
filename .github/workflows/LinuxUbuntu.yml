@@ -1,0 +1,42 @@
+name: Ubuntu Desktop (via bore)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Desktop & VNC
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tightvncserver
+
+      - name: Install bore
+        run: |
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+
+      - name: Configure VNC password
+        run: |
+          mkdir -p ~/.vnc
+          echo "secret" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+
+      - name: Start VNC server
+        run: |
+          vncserver :1 -geometry 1280x720 -depth 24
+          sleep 3
+
+      - name: Expose VNC via bore
+        run: |
+          bore local 5901 --to bore.pub &
+          sleep 5
+          echo "Connect to: bore.pub:XXXXX (port will appear in logs above)"
+          echo "Run this locally: vncviewer bore.pub:XXXXX"
+
+      - name: Keep runner alive
+        run: sleep 6h
