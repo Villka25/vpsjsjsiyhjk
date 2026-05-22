@@ -1,7 +1,7 @@
 name: Unity Server (bore)
 
 on:
-  workflow_dispatch:   # запускаешь вручную на вкладке Actions
+  workflow_dispatch:
 
 jobs:
   server:
@@ -14,7 +14,7 @@ jobs:
 
       - name: Download server build
         run: |
-          # Замени ссылку на свой актуальный build.zip (catbox, GitHub Releases, что угодно)
+          # Замени ссылку на свой актуальный build.zip
           wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
           unzip build.zip -d server
           rm build.zip
@@ -34,14 +34,28 @@ jobs:
           ./buildaa.x86_64 -batchmode -nographics -port 7777 &
           sleep 3
 
-      - name: Expose server via bore
+      - name: Expose server via bore (auto-restart)
         run: |
-          bore local 7777 --to bore.pub &
-          sleep 5
-          echo "============================================"
-          echo "Сервер запущен. Подключайся по адресу:"
-          echo "bore.pub (порт будет в логах ниже)"
-          echo "============================================"
+          # Запускаем bore в бесконечном цикле с перезапуском при падении
+          (
+            while true; do
+              echo "Bore tunnel starting (or restarted)..."
+              bore local 7777 --to bore.pub 2>&1 | while IFS= read -r line; do
+                echo "$line"
+                if [[ "$line" == *"listening at bore.pub:"* ]]; then
+                  PORT=$(echo "$line" | grep -oP 'bore\.pub:\K\d+')
+                  echo "============================================"
+                  echo "Сервер доступен: bore.pub:$PORT"
+                  echo "============================================"
+                fi
+              done
+              echo "Bore tunnel exited. Restarting in 5 seconds..."
+              sleep 5
+            done
+          ) &
+          # Ждём, чтобы туннель успел подняться
+          sleep 10
+          echo "Туннель bore запущен в фоне. Проверьте логи выше для адреса и порта."
 
       - name: Keep alive (max 6 hours)
         run: sleep 6h
