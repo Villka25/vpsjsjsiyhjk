@@ -1,0 +1,41 @@
+name: Windows Desktop (VNC + bore)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - name: Download and install TightVNC Server
+        run: |
+          # Скачиваем установщик
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
+          # Устанавливаем тихо
+          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server" VIEWER_ASSOCIATE_VNC_EXTENSION=0 SERVER_REGISTER_AS_SERVICE=0'
+          # Путь к исполняемым файлам TightVNC (добавляем в PATH)
+          $env:Path += ";C:\Program Files\TightVNC"
+          # Устанавливаем пароль для VNC (интерактивно через утилиту, здесь через реестр)
+          # Сгенерируем хэш пароля (алгоритм VNC)
+          # Для простоты используем временный пароль через утилиту tvnserver
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
+          # Запускаем сервер как приложение (без службы), чтобы не возиться с правами
+          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+
+      - name: Install bore (Windows)
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
+          Expand-Archive bore.zip -DestinationPath .
+          # Добавляем bore.exe в текущую папку и прописываем путь
+          $env:Path += ";$pwd"
+
+      - name: Expose VNC via bore
+        run: |
+          # Запускаем bore в фоновом режиме (в Windows это можно сделать через Start-Process)
+          Start-Process -NoNewWindow -FilePath "./bore.exe" -ArgumentList "local 5900 --to bore.pub"
+          Start-Sleep -Seconds 5
+          Write-Host "Connect with VNC viewer to: bore.pub:PORT (the port will be printed by bore in the logs above)"
+          Write-Host "Password: MySecret123"
+
+      - name: Keep runner alive
+        run: Start-Sleep -Seconds 21600   # 6 часов
