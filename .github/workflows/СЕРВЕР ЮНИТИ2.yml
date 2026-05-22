@@ -25,7 +25,7 @@ jobs:
         run: |
           if [ ! -f build.zip ]; then
             echo "Файл не найден в кеше, скачиваем..."
-            wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
+            wget -O build.zip "https://files.catbox.moe/9e0mli.zip"
           else
             echo "Используем кешированный build.zip"
           fi
