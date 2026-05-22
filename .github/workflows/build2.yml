@@ -1,27 +1,32 @@
-name: Build Snake (C++ + SFML)
+name: Build Snake EXE (Windows)
 
 on:
-  workflow_dispatch:  # запуск вручную по кнопке "Run workflow"
+  workflow_dispatch:   # запуск вручную
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install SFML dependencies
+      - name: Setup vcpkg and install SFML (static)
         run: |
-          sudo apt update
-          sudo apt install -y libsfml-dev
+          vcpkg integrate install
+          vcpkg install sfml:x64-windows-static
 
-      - name: Build project
+      - name: Configure CMake
         run: |
-          g++ snake.cpp -o snake -lsfml-graphics -lsfml-window -lsfml-system -std=c++17
-          strip snake  # уменьшаем размер бинарника
+          cmake -B build -S . `
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_BUILD_TYPE=Release
 
-      - name: Upload artifact
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: snake-linux
-          path: snake
+          name: snake-windows
+          path: build/Release/snake.exe
