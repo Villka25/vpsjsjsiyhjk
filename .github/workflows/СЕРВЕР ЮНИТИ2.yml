@@ -1,4 +1,4 @@
-name: Unity Server (bore)
+name: Unity Server (bore) 2
 
 on:
   workflow_dispatch:
