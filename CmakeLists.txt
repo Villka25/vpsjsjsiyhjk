@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.14)
+project(Snake)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SFML REQUIRED COMPONENTS graphics window system)
+
+add_executable(snake snake.cpp)
+target_link_libraries(snake PRIVATE sfml-graphics sfml-window sfml-system)
