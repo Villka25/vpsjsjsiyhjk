@@ -1,0 +1,27 @@
+name: Build Snake (C++ + SFML)
+
+on:
+  workflow_dispatch:  # запуск вручную по кнопке "Run workflow"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install SFML dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libsfml-dev
+
+      - name: Build project
+        run: |
+          g++ snake.cpp -o snake -lsfml-graphics -lsfml-window -lsfml-system -std=c++17
+          strip snake  # уменьшаем размер бинарника
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: snake-linux
+          path: snake
