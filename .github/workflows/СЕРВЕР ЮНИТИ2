@@ -1,0 +1,75 @@
+name: Unity Server (bore)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libstdc++6 wget unzip
+
+      # --- Кеширование билда ---
+      - name: Cache server build
+        uses: actions/cache@v3
+        with:
+          path: build.zip
+          key: server-build-${{ hashFiles('.github/workflows/server.yml') }}
+          restore-keys: |
+            server-build-
+
+      - name: Download server build (if not cached)
+        run: |
+          if [ ! -f build.zip ]; then
+            echo "Файл не найден в кеше, скачиваем..."
+            wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
+          else
+            echo "Используем кешированный build.zip"
+          fi
+
+      - name: Extract server files
+        run: |
+          unzip -o build.zip -d server
+          chmod +x server/buildaa.x86_64
+
+      - name: Install bore
+        run: |
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+
+      - name: Start game server
+        run: |
+          cd server
+          ./buildaa.x86_64 -batchmode -nographics -port 7777 &
+          sleep 3
+
+      - name: Expose server via bore (auto-restart)
+        run: |
+          # Запускаем bore в бесконечном цикле с перезапуском при падении
+          (
+            while true; do
+              echo "Bore tunnel starting (or restarted)..."
+              bore local 7777 --to bore.pub 2>&1 | while IFS= read -r line; do
+                echo "$line"
+                if [[ "$line" == *"listening at bore.pub:"* ]]; then
+                  PORT=$(echo "$line" | grep -oP 'bore\.pub:\K\d+')
+                  echo "============================================"
+                  echo "Сервер запущен и доступен: bore.pub:$PORT"
+                  echo "============================================"
+                fi
+              done
+              echo "Bore tunnel exited. Restarting in 5 seconds..."
+              sleep 5
+            done
+          ) &
+          sleep 10
+          echo "Туннель bore запущен в фоне. Проверьте логи выше для адреса и порта."
+
+      - name: Keep alive (max 6 hours)
+        run: sleep 6h
