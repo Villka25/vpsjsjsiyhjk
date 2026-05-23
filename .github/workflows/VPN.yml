@@ -9,13 +9,13 @@ jobs:
     steps:
       - name: Install Xray
         run: |
-          bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version 1.8.23
+          sudo bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version 1.8.23
 
-      - name: Configure Xray (VLESS + gRPC)
+      - name: Configure Xray
         run: |
           UUID=$(cat /proc/sys/kernel/random/uuid)
-          echo "Generated UUID: $UUID"
-          cat > /usr/local/etc/xray/config.json <<EOF
+          echo "UUID=$UUID" >> $GITHUB_ENV
+          sudo tee /usr/local/etc/xray/config.json > /dev/null <<EOF
           {
             "log": {"loglevel": "warning"},
             "inbounds": [{
@@ -34,32 +34,31 @@ jobs:
             "outbounds": [{"protocol": "freedom"}]
           }
           EOF
-          systemctl restart xray
-          echo "UUID=$UUID" >> $GITHUB_ENV
+          sudo systemctl restart xray
 
       - name: Install cloudflared
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-          chmod +x /usr/local/bin/cloudflared
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
 
       - name: Start Cloudflare Tunnel
         run: |
-          cloudflared tunnel --url http://localhost:10000 > /tmp/cloudflared.log 2>&1 &
+          sudo cloudflared tunnel --url http://localhost:10000 > /tmp/cloudflared.log 2>&1 &
           sleep 10
           TUNNEL_HOST=$(grep -oP 'https://\K[^ ]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
           if [ -z "$TUNNEL_HOST" ]; then
-            echo "Tunnel host not found, showing log:"
+            echo "Tunnel not created, log:"
             cat /tmp/cloudflared.log
             exit 1
           fi
-          echo "Tunnel host: $TUNNEL_HOST"
           echo "TUNNEL_HOST=$TUNNEL_HOST" >> $GITHUB_ENV
 
       - name: Generate connection link
         run: |
-          VLESS_LINK="vless://${UUID}@${TUNNEL_HOST}:443?encryption=none&security=tls&type=grpc&serviceName=grpc&mode=multi#GitHubActions-VPN"
+          VLESS_LINK="vless://${{ env.UUID }}@${{ env.TUNNEL_HOST }}:443?encryption=none&security=tls&type=grpc&serviceName=grpc&mode=multi#GitHubActions-VPN"
           echo "============================================="
-          echo "Your VPN link:"
+          echo "Your VPN link (import to v2rayN/Hiddify):"
           echo "$VLESS_LINK"
           echo "============================================="
 
