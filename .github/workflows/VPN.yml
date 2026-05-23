@@ -1,0 +1,67 @@
+name: VPN Server (VLESS+gRPC+Cloudflare)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  vpn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Xray
+        run: |
+          bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --version 1.8.23
+
+      - name: Configure Xray (VLESS + gRPC)
+        run: |
+          UUID=$(cat /proc/sys/kernel/random/uuid)
+          echo "Generated UUID: $UUID"
+          cat > /usr/local/etc/xray/config.json <<EOF
+          {
+            "log": {"loglevel": "warning"},
+            "inbounds": [{
+              "port": 10000,
+              "listen": "127.0.0.1",
+              "protocol": "vless",
+              "settings": {
+                "clients": [{"id": "$UUID"}],
+                "decryption": "none"
+              },
+              "streamSettings": {
+                "network": "grpc",
+                "grpcSettings": {"serviceName": "grpc"}
+              }
+            }],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          EOF
+          systemctl restart xray
+          echo "UUID=$UUID" >> $GITHUB_ENV
+
+      - name: Install cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          cloudflared tunnel --url http://localhost:10000 > /tmp/cloudflared.log 2>&1 &
+          sleep 10
+          TUNNEL_HOST=$(grep -oP 'https://\K[^ ]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
+          if [ -z "$TUNNEL_HOST" ]; then
+            echo "Tunnel host not found, showing log:"
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+          echo "Tunnel host: $TUNNEL_HOST"
+          echo "TUNNEL_HOST=$TUNNEL_HOST" >> $GITHUB_ENV
+
+      - name: Generate connection link
+        run: |
+          VLESS_LINK="vless://${UUID}@${TUNNEL_HOST}:443?encryption=none&security=tls&type=grpc&serviceName=grpc&mode=multi#GitHubActions-VPN"
+          echo "============================================="
+          echo "Your VPN link:"
+          echo "$VLESS_LINK"
+          echo "============================================="
+
+      - name: Keep alive (6 hours)
+        run: sleep 21600
