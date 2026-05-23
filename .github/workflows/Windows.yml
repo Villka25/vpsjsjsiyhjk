@@ -1,4 +1,4 @@
-name: Windows Desktop (VNC via Cloudflare Tunnel) – Full Fix
+name: Windows Desktop (VNC via Cloudflare Tunnel) - Fixed
 
 on:
   workflow_dispatch:
@@ -16,13 +16,8 @@ jobs:
       - name: Configure and start VNC Server
         shell: powershell
         run: |
-          # Устанавливаем пароль
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          
-          # Запускаем сервер как приложение (не службу), чтобы всё работало в CI
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          
-          # Ждём немного, чтобы сервер поднялся
           Start-Sleep -Seconds 5
 
       - name: Open firewall port 5900
@@ -53,22 +48,17 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Starting Cloudflare TCP tunnel..."
-          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" `
-            -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
-          
-          # Ждём, пока туннель создастся
+          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
           Start-Sleep -Seconds 15
-          
-          # Извлекаем hostname из вывода (он напечатан в логах выше)
-          # Вы можете найти его вручную – ищите строку "https://<какой-то>.trycloudflare.com"
           Write-Host "============================================="
-          Write-Host "Для подключения:"
-          Write-Host "1. Откройте VNC‑клиент (TightVNC, RealVNC и т.п.)"
-          Write-Host "2. В поле 'VNC Server' введите hostname из логов выше (без https://) и порт 5900"
-          Write-Host "   Пример: generating-jaguar-dietary-reality.trycloudflare.com:5900"
-          Write-Host "3. Пароль: MySecret123"
+          Write-Host "To connect:"
+          Write-Host "1. Open a VNC client (TightVNC Viewer, RealVNC, etc.)"
+          Write-Host "2. In the logs above, find the line with 'https://<name>.trycloudflare.com'"
+          Write-Host "3. Copy the <name>.trycloudflare.com part (without https://) and add :5900"
+          Write-Host "   Example: something.trycloudflare.com:5900"
+          Write-Host "4. Password: MySecret123"
           Write-Host "============================================="
-          Write-Host "Ждём подключения... (сессия до 6 часов)"
+          Write-Host "Waiting for connections... (session up to 6 hours)"
 
       - name: Keep runner alive
         shell: powershell
