@@ -1,4 +1,4 @@
-name: Ubuntu Desktop (via bore)
+name: Ubuntu Desktop (VNC via bore)
 
 on:
   workflow_dispatch:
@@ -7,10 +7,11 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Desktop & VNC
+      - name: Install desktop and VNC components
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tightvncserver
+          # Окружение XFCE + виртуальный X-сервер + VNC
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
 
       - name: Install bore
         run: |
@@ -20,23 +21,42 @@ jobs:
           sudo mv bore /usr/local/bin/
           rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
 
-      - name: Configure VNC password
+      - name: Setup VNC password
         run: |
           mkdir -p ~/.vnc
           echo "secret" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
+          # TigerVNC требует файл с паролем, tightvncserver тоже его понимает
 
-      - name: Start VNC server
+      - name: Start virtual X server and VNC
         run: |
-          vncserver :1 -geometry 1280x720 -depth 24
+          # Запускаем Xvnc на дисплее :1 (порт 5901)
+          # Геометрия 1280x720, глубина 24
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+          sleep 3
+          # Проверим, что процесс жив
+          pgrep -a Xtigervnc || echo "VNC server not running!"
+
+      - name: Start XFCE desktop inside VNC
+        run: |
+          # Говорим VNC-сессии запустить XFCE при старте
+          echo "startxfce4 &" >> ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          # Перезапускаем сессию, чтобы применить xstartup
+          vncserver -kill :1
+          sleep 1
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
           sleep 3
 
       - name: Expose VNC via bore
         run: |
           bore local 5901 --to bore.pub &
           sleep 5
-          echo "Connect to: bore.pub:XXXXX (port will appear in logs above)"
-          echo "Run this locally: vncviewer bore.pub:XXXXX"
+          echo "============================================="
+          echo "Connect your VNC viewer to bore.pub:<port>"
+          echo "Password: secret"
+          echo "The exact port will be shown in the lines above."
+          echo "============================================="
 
       - name: Keep runner alive
         run: sleep 6h
