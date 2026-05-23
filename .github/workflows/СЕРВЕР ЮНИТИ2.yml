@@ -1,75 +1,81 @@
-name: Unity Server (bore) 2
+name: Windows Desktop (noVNC + Cloudflare Tunnel + Data Persistence)
 
 on:
   workflow_dispatch:
 
 jobs:
-  server:
-    runs-on: ubuntu-latest
+  desktop:
+    runs-on: windows-latest
     steps:
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libstdc++6 wget unzip
+      # 1. Устанавливаем Python (уже есть, проверяем)
+      - name: Check Python
+        shell: powershell
+        run: python --version
 
-      # --- Кеширование билда ---
-      - name: Cache server build
-        uses: actions/cache@v3
+      # 2. Устанавливаем TightVNC Server
+      - name: Install TightVNC Server
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
+          # Задаём пароль и запускаем VNC сервер
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
+          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+
+      # 3. Настраиваем noVNC (веб-клиент VNC) и websockify
+      - name: Setup noVNC and websockify
+        shell: powershell
+        run: |
+          git clone https://github.com/novnc/noVNC.git
+          git clone https://github.com/novnc/websockify.git
+          # Устанавливаем зависимости websockify
+          cd websockify
+          python setup.py install
+          cd ..
+
+      # 4. Запускаем websockify на порту 6080, который проксирует VNC (порт 5900)
+      - name: Start websockify (VNC → WebSocket)
+        shell: powershell
+        run: |
+          cd websockify
+          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "run.py 6080 localhost:5900" -PassThru
+          cd ..
+          Start-Sleep -Seconds 3
+
+      # 5. Устанавливаем cloudflared и запускаем туннель до порта 6080
+      - name: Install and run Cloudflare Tunnel
+        shell: powershell
+        run: |
+          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
+          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080" -PassThru
+          Start-Sleep -Seconds 15
+          Write-Host "============================================="
+          Write-Host "Desktop is ready!"
+          Write-Host "Look in the logs above for a line like:"
+          Write-Host "  https://<random-name>.trycloudflare.com"
+          Write-Host "Open that URL in your browser."
+          Write-Host "Then click 'Connect' and enter password: MySecret123"
+          Write-Host "============================================="
+
+      # 6. Ждём 6 часов (максимальное время жизни раннера)
+      - name: Keep runner alive
+        shell: powershell
+        run: Start-Sleep -Seconds 21600
+
+      # 7. Архивируем всю домашнюю папку пользователя и загружаем в артефакт
+      - name: Save all user data to artifact
+        shell: powershell
+        run: |
+          Write-Host "Saving your data..."
+          # Архивируем папку пользователя runneradmin (C:\Users\runneradmin)
+          Compress-Archive -Path C:\Users\runneradmin\* -DestinationPath C:\temp\persistent_data.zip -Force
+          Write-Host "Archive created."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: build.zip
-          key: server-build-${{ hashFiles('.github/workflows/server.yml') }}
-          restore-keys: |
-            server-build-
-
-      - name: Download server build (if not cached)
-        run: |
-          if [ ! -f build.zip ]; then
-            echo "Файл не найден в кеше, скачиваем..."
-            wget -O build.zip "https://files.catbox.moe/9z071c.zip"
-          else
-            echo "Используем кешированный build.zip"
-          fi
-
-      - name: Extract server files
-        run: |
-          unzip -o build.zip -d server
-          chmod +x server/buildaa.x86_64
-
-      - name: Install bore
-        run: |
-          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
-          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
-          chmod +x bore
-          sudo mv bore /usr/local/bin/
-          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
-
-      - name: Start game server
-        run: |
-          cd server
-          ./buildaa.x86_64 -batchmode -nographics -port 7777 &
-          sleep 3
-
-      - name: Expose server via bore (auto-restart)
-        run: |
-          # Запускаем bore в бесконечном цикле с перезапуском при падении
-          (
-            while true; do
-              echo "Bore tunnel starting (or restarted)..."
-              bore local 7777 --to bore.pub 2>&1 | while IFS= read -r line; do
-                echo "$line"
-                if [[ "$line" == *"listening at bore.pub:"* ]]; then
-                  PORT=$(echo "$line" | grep -oP 'bore\.pub:\K\d+')
-                  echo "============================================"
-                  echo "Сервер запущен и доступен: bore.pub:$PORT"
-                  echo "============================================"
-                fi
-              done
-              echo "Bore tunnel exited. Restarting in 5 seconds..."
-              sleep 5
-            done
-          ) &
-          sleep 10
-          echo "Туннель bore запущен в фоне. Проверьте логи выше для адреса и порта."
-
-      - name: Keep alive (max 6 hours)
-        run: sleep 6h
+          name: persistent-data
+          path: C:\temp\persistent_data.zip
+          retention-days: 90
