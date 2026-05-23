@@ -1,4 +1,4 @@
-name: Windows Desktop (VNC via Cloudflare Tunnel) - Fixed
+name: Windows Desktop (VNC via Cloudflare Tunnel) – Full Fix
 
 on:
   workflow_dispatch:
@@ -7,56 +7,69 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
-      # 1. Установка и настройка VNC-сервера
       - name: Install TightVNC Server
         shell: powershell
         run: |
-          Write-Host "Downloading TightVNC..."
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          
-          Write-Host "Configuring VNC Server..."
-          # Задаём пароль и запускаем VNC-сервер в фоне
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          
-          Write-Host "TightVNC Server started successfully."
 
-      # 2. Загрузка portable-версии cloudflared (.exe)
-      - name: Download cloudflared portable exe
+      - name: Configure and start VNC Server
         shell: powershell
         run: |
-          Write-Host "Downloading cloudflared..."
-          # Скачиваем .exe напрямую, так как .zip версии не существует
-          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
+          # Устанавливаем пароль
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
           
-          # Проверяем, что файл скачался
-          if (Test-Path "cloudflared.exe") {
-            Write-Host "cloudflared.exe downloaded successfully."
+          # Запускаем сервер как приложение (не службу), чтобы всё работало в CI
+          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          
+          # Ждём немного, чтобы сервер поднялся
+          Start-Sleep -Seconds 5
+
+      - name: Open firewall port 5900
+        shell: powershell
+        run: |
+          Write-Host "Adding firewall rule for port 5900..."
+          New-NetFirewallRule -DisplayName "Allow VNC 5900" -Direction Inbound -Protocol TCP -LocalPort 5900 -Action Allow
+
+      - name: Verify VNC is listening
+        shell: powershell
+        run: |
+          $listening = netstat -an | Select-String ":5900"
+          if ($listening) {
+            Write-Host "VNC Server is listening on port 5900"
           } else {
-            Write-Error "Failed to download cloudflared.exe"
+            Write-Error "VNC Server is NOT listening on port 5900! Check TightVNC installation."
             exit 1
           }
 
-      # 3. Запуск туннеля и вывод информации для подключения
+      - name: Download cloudflared
+        shell: powershell
+        run: |
+          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
+          if (!(Test-Path "cloudflared.exe")) { Write-Error "Download failed"; exit 1 }
+
       - name: Expose VNC via Cloudflare Tunnel
         shell: powershell
         run: |
-          Write-Host "Starting Cloudflare Tunnel..."
-          # Запускаем туннель в фоновом процессе
-          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
+          Write-Host "Starting Cloudflare TCP tunnel..."
+          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" `
+            -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
           
-          # Ждем, пока туннель установится и выдаст URL
+          # Ждём, пока туннель создастся
           Start-Sleep -Seconds 15
           
+          # Извлекаем hostname из вывода (он напечатан в логах выше)
+          # Вы можете найти его вручную – ищите строку "https://<какой-то>.trycloudflare.com"
           Write-Host "============================================="
-          Write-Host "VNC Server is ready!"
-          Write-Host "Connect your VNC viewer to the URL above (it will look like https://random-name.trycloudflare.com)"
-          Write-Host "VNC Password: MySecret123"
+          Write-Host "Для подключения:"
+          Write-Host "1. Откройте VNC‑клиент (TightVNC, RealVNC и т.п.)"
+          Write-Host "2. В поле 'VNC Server' введите hostname из логов выше (без https://) и порт 5900"
+          Write-Host "   Пример: generating-jaguar-dietary-reality.trycloudflare.com:5900"
+          Write-Host "3. Пароль: MySecret123"
           Write-Host "============================================="
+          Write-Host "Ждём подключения... (сессия до 6 часов)"
 
-      # 4. Поддержание жизни раннера
       - name: Keep runner alive
         shell: powershell
         run: Start-Sleep -Seconds 21600
