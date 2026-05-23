@@ -1,4 +1,4 @@
-name: Ubuntu Desktop (VNC via bore)
+name: Ubuntu Desktop (VNC via bore) - Fixed
 
 on:
   workflow_dispatch:
@@ -10,7 +10,6 @@ jobs:
       - name: Install desktop and VNC components
         run: |
           sudo apt update
-          # Окружение XFCE + виртуальный X-сервер + VNC
           sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
 
       - name: Install bore
@@ -21,32 +20,28 @@ jobs:
           sudo mv bore /usr/local/bin/
           rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
 
-      - name: Setup VNC password
+      - name: Setup VNC password and xstartup
         run: |
           mkdir -p ~/.vnc
           echo "secret" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
-          # TigerVNC требует файл с паролем, tightvncserver тоже его понимает
-
-      - name: Start virtual X server and VNC
-        run: |
-          # Запускаем Xvnc на дисплее :1 (порт 5901)
-          # Геометрия 1280x720, глубина 24
-          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
-          sleep 3
-          # Проверим, что процесс жив
-          pgrep -a Xtigervnc || echo "VNC server not running!"
-
-      - name: Start XFCE desktop inside VNC
-        run: |
-          # Говорим VNC-сессии запустить XFCE при старте
-          echo "startxfce4 &" >> ~/.vnc/xstartup
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
           chmod +x ~/.vnc/xstartup
-          # Перезапускаем сессию, чтобы применить xstartup
-          vncserver -kill :1
-          sleep 1
+
+      - name: Start VNC server
+        run: |
           vncserver :1 -geometry 1280x720 -depth 24 -localhost no
           sleep 3
+          # Проверка, что процесс запущен
+          if ! pgrep -x Xtigervnc > /dev/null; then
+            echo "ERROR: VNC server failed to start!"
+            exit 1
+          fi
 
       - name: Expose VNC via bore
         run: |
