@@ -1,42 +1,39 @@
-name: Build Snake EXE (Windows) + DLLs
+name: Build 3D Game (C++ SFML OpenGL)
 
-on:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup vcpkg and install SFML (dynamic)
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
-          vcpkg integrate install
+          sudo apt update
+          sudo apt install -y libsfml-dev
+
+      - name: Install Windows dependencies (vcpkg)
+        if: runner.os == 'Windows'
+        run: |
           vcpkg install sfml:x64-windows
+          vcpkg integrate install
 
       - name: Configure CMake
         run: |
-          cmake -B build -S . `
-            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ${{ runner.os == 'Windows' && '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows' || '' }}
 
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Copy required DLLs
-        run: |
-          $bindir = "build/Release"
-          $vcpkgbin = "C:/vcpkg/installed/x64-windows/bin"
-          Copy-Item "$vcpkgbin/sfml-graphics-2.dll" $bindir
-          Copy-Item "$vcpkgbin/sfml-window-2.dll" $bindir
-          Copy-Item "$vcpkgbin/sfml-system-2.dll" $bindir
-          Copy-Item "$vcpkgbin/openal32.dll" $bindir
-          # Если понадобятся ещё DLL, добавим позже
-
-      - name: Upload artifact (EXE + DLLs)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: snake-windows
-          path: build/Release/
+          name: game-${{ runner.os }}
+          path: |
+            ${{ runner.os == 'Windows' && 'build/Release/3dgame.exe' || 'build/3dgame' }}
