@@ -1,65 +1,66 @@
-name: Windows Desktop (noVNC via Cloudflare Tunnel)
+name: Ubuntu Desktop (noVNC via Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
 
 jobs:
   desktop:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      # 1. Устанавливаем Python (есть на раннере) и настраиваем noVNC
-      - name: Setup Python and noVNC
-        shell: powershell
+      # 1. Устанавливаем графическое окружение и VNC-сервер
+      - name: Install desktop and VNC
         run: |
-          python --version
-          # Скачиваем noVNC (веб-клиент VNC) и websockify
-          git clone https://github.com/novnc/noVNC.git
-          git clone https://github.com/novnc/websockify.git
-          # Устанавливаем зависимости для websockify
-          cd websockify
-          python setup.py install
-          cd ..
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
 
-      # 2. Устанавливаем TightVNC сервер и запускаем его
-      - name: Install and start TightVNC Server
-        shell: powershell
+      # 2. Устанавливаем noVNC (веб-клиент VNC)
+      - name: Install noVNC
         run: |
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          # Устанавливаем пароль и запускаем сервер
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-          # Проверяем, что порт слушается
-          netstat -an | Select-String ":5900"
+          sudo apt install -y novnc
 
-      # 3. Запускаем websockify для проброса VNC в WebSocket (порт 6080)
-      - name: Start websockify (VNC → WebSocket)
-        shell: powershell
+      # 3. Устанавливаем cloudflared (Cloudflare Tunnel)
+      - name: Install cloudflared
         run: |
-          cd websockify
-          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "run.py 6080 localhost:5900" -PassThru
-          cd ..
-          Start-Sleep -Seconds 3
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          rm cloudflared-linux-amd64.deb
 
-      # 4. Устанавливаем и запускаем Cloudflare Tunnel (cloudflared)
-      - name: Install and run Cloudflare Tunnel
-        shell: powershell
+      # 4. Настраиваем пароль VNC и запускаем TigerVNC
+      - name: Setup VNC password and start VNC server
         run: |
-          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
-          # Запускаем туннель до порта 6080
-          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080" -PassThru
-          Start-Sleep -Seconds 15
-          Write-Host "============================================="
-          Write-Host "Desktop is ready!"
-          Write-Host "Look in the logs above for a line like:"
-          Write-Host "  https://<random-name>.trycloudflare.com"
-          Write-Host "Open that URL in your browser."
-          Write-Host "Then click 'Connect' and enter password: MySecret123"
-          Write-Host "============================================="
+          mkdir -p ~/.vnc
+          echo "secret" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+          sleep 3
 
-      # 5. Держим сессию живой 6 часов
+      # 5. Запускаем noVNC, который слушает порт 6080 и подключается к VNC на порту 5901
+      - name: Start noVNC
+        run: |
+          # noVNC будет доступен на http://localhost:6080/vnc.html?host=localhost&port=5901
+          websockify --web=/usr/share/novnc 6080 localhost:5901 &
+          sleep 3
+
+      # 6. Пробрасываем порт 6080 через Cloudflare Tunnel (HTTPS)
+      - name: Expose noVNC via Cloudflare Tunnel
+        run: |
+          cloudflared tunnel --url http://localhost:6080 &
+          sleep 10
+          echo "============================================="
+          echo "Desktop is ready!"
+          echo "Look in the logs above for a line like:"
+          echo "  https://<random-name>.trycloudflare.com"
+          echo "Open that URL in your browser."
+          echo "VNC Password: secret"
+          echo "============================================="
+
+      # 7. Держим сессию живой до 6 часов
       - name: Keep runner alive
-        shell: powershell
-        run: Start-Sleep -Seconds 21600
+        run: sleep 6h
