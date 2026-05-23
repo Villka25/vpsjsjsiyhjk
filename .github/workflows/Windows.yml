@@ -7,35 +7,33 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
-      - name: Install Desktop Experience & VNC
+      - name: Install TightVNC Server
         shell: powershell
         run: |
-          # Устанавливаем TightVNC (тихая установка)
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-
-          # Устанавливаем пароль для VNC и запускаем сервер
+          # Задаём пароль и запускаем VNC‑сервер
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
 
-      - name: Install Cloudflare Tunnel (cloudflared)
+      - name: Download portable cloudflared
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi" -OutFile cloudflared.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/i cloudflared.msi /quiet'
-          # Добавляем в PATH на всякий случай
-          $env:Path += ";C:\Program Files (x86)\cloudflared"
+          # Скачиваем zip‑архив с portable‑версией
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip" -OutFile cloudflared.zip
+          Expand-Archive cloudflared.zip -DestinationPath .
+          # Проверяем, что файл появился
+          if (-not (Test-Path ".\cloudflared.exe")) { throw "cloudflared.exe not found" }
 
       - name: Expose VNC via Cloudflare Tunnel
         shell: powershell
         run: |
-          # Запускаем туннель до порта 5900 (VNC) и выводим URL в консоль
-          Start-Process -NoNewWindow -FilePath "cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900"
-          # Даем туннелю время на установку соединения
+          # Запускаем туннель (используем полный путь к portable‑версии)
+          $cloudflared = "$pwd\cloudflared.exe"
+          Start-Process -NoNewWindow -FilePath $cloudflared -ArgumentList "tunnel --url tcp://localhost:5900"
           Start-Sleep -Seconds 10
-          
           Write-Host "============================================="
-          Write-Host "Connect your VNC viewer to the URL above"
+          Write-Host "Connect your VNC viewer to the URL shown above"
           Write-Host "VNC Password: MySecret123"
           Write-Host "============================================="
 
