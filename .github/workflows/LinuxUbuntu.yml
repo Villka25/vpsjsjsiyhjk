@@ -1,42 +1,57 @@
-name: Windows Desktop (VNC via Cloudflare Tunnel)
+name: Ubuntu Desktop (VNC via bore) - Fixed
 
 on:
   workflow_dispatch:
 
 jobs:
   desktop:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: Install TightVNC Server
-        shell: powershell
+      - name: Install desktop and VNC components
         run: |
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          # Задаём пароль и запускаем VNC‑сервер
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
 
-      - name: Download portable cloudflared
-        shell: powershell
+      - name: Install bore
         run: |
-          # Скачиваем zip‑архив с portable‑версией
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip" -OutFile cloudflared.zip
-          Expand-Archive cloudflared.zip -DestinationPath .
-          # Проверяем, что файл появился
-          if (-not (Test-Path ".\cloudflared.exe")) { throw "cloudflared.exe not found" }
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
 
-      - name: Expose VNC via Cloudflare Tunnel
-        shell: powershell
+      - name: Setup VNC password and xstartup
         run: |
-          # Запускаем туннель (используем полный путь к portable‑версии)
-          $cloudflared = "$pwd\cloudflared.exe"
-          Start-Process -NoNewWindow -FilePath $cloudflared -ArgumentList "tunnel --url tcp://localhost:5900"
-          Start-Sleep -Seconds 10
-          Write-Host "============================================="
-          Write-Host "Connect your VNC viewer to the URL shown above"
-          Write-Host "VNC Password: MySecret123"
-          Write-Host "============================================="
+          mkdir -p ~/.vnc
+          echo "secret" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
+          chmod +x ~/.vnc/xstartup
+
+      - name: Start VNC server
+        run: |
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+          sleep 3
+          # Проверка, что процесс запущен
+          if ! pgrep -x Xtigervnc > /dev/null; then
+            echo "ERROR: VNC server failed to start!"
+            exit 1
+          fi
+
+      - name: Expose VNC via bore
+        run: |
+          bore local 5901 --to bore.pub &
+          sleep 5
+          echo "============================================="
+          echo "Connect your VNC viewer to bore.pub:<port>"
+          echo "Password: secret"
+          echo "The exact port will be shown in the lines above."
+          echo "============================================="
 
       - name: Keep runner alive
-        shell: powershell
-        run: Start-Sleep -Seconds 21600
+        run: sleep 6h
