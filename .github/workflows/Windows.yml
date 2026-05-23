@@ -1,4 +1,4 @@
-name: Windows Desktop (VNC via Cloudflare Tunnel) - Fixed
+name: Windows Desktop (VNC via bore)
 
 on:
   workflow_dispatch:
@@ -23,39 +23,27 @@ jobs:
       - name: Open firewall port 5900
         shell: powershell
         run: |
-          Write-Host "Adding firewall rule for port 5900..."
           New-NetFirewallRule -DisplayName "Allow VNC 5900" -Direction Inbound -Protocol TCP -LocalPort 5900 -Action Allow
 
-      - name: Verify VNC is listening
+      - name: Download bore
         shell: powershell
         run: |
-          $listening = netstat -an | Select-String ":5900"
-          if ($listening) {
-            Write-Host "VNC Server is listening on port 5900"
-          } else {
-            Write-Error "VNC Server is NOT listening on port 5900! Check TightVNC installation."
-            exit 1
-          }
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
+          Expand-Archive bore.zip -DestinationPath .
+          if (!(Test-Path ".\bore.exe")) { Write-Error "bore.exe not found"; exit 1 }
 
-      - name: Download cloudflared
+      - name: Expose VNC via bore
         shell: powershell
         run: |
-          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
-          if (!(Test-Path "cloudflared.exe")) { Write-Error "Download failed"; exit 1 }
-
-      - name: Expose VNC via Cloudflare Tunnel
-        shell: powershell
-        run: |
-          Write-Host "Starting Cloudflare TCP tunnel..."
-          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
-          Start-Sleep -Seconds 15
+          Write-Host "Starting bore tunnel on port 5900..."
+          Start-Process -NoNewWindow -FilePath ".\bore.exe" -ArgumentList "local 5900 --to bore.pub" -PassThru
+          Start-Sleep -Seconds 10
           Write-Host "============================================="
           Write-Host "To connect:"
           Write-Host "1. Open a VNC client (TightVNC Viewer, RealVNC, etc.)"
-          Write-Host "2. In the logs above, find the line with 'https://<name>.trycloudflare.com'"
-          Write-Host "3. Copy the <name>.trycloudflare.com part (without https://) and add :5900"
-          Write-Host "   Example: something.trycloudflare.com:5900"
+          Write-Host "2. In the logs above, find a line like:"
+          Write-Host "   listening at bore.pub:12345"
+          Write-Host "3. Connect to that address (bore.pub:12345)"
           Write-Host "4. Password: MySecret123"
           Write-Host "============================================="
           Write-Host "Waiting for connections... (session up to 6 hours)"
