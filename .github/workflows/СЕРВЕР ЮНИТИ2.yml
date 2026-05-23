@@ -7,43 +7,35 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
-      # 1. Устанавливаем Python (уже есть, проверяем)
       - name: Check Python
         shell: powershell
         run: python --version
 
-      # 2. Устанавливаем TightVNC Server
+      # Устанавливаем TightVNC Server
       - name: Install TightVNC Server
         shell: powershell
         run: |
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          # Задаём пароль и запускаем VNC сервер
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
           Start-Sleep -Seconds 5
 
-      # 3. Настраиваем noVNC (веб-клиент VNC) и websockify
+      # Клонируем noVNC и устанавливаем websockify через pip
       - name: Setup noVNC and websockify
         shell: powershell
         run: |
           git clone https://github.com/novnc/noVNC.git
-          git clone https://github.com/novnc/websockify.git
-          # Устанавливаем зависимости websockify
-          cd websockify
-          python setup.py install
-          cd ..
+          pip install websockify
 
-      # 4. Запускаем websockify на порту 6080, который проксирует VNC (порт 5900)
+      # Запускаем websockify, отдающий веб-интерфейс noVNC на порту 6080 и подключающийся к VNC на 5900
       - name: Start websockify (VNC → WebSocket)
         shell: powershell
         run: |
-          cd websockify
-          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "run.py 6080 localhost:5900" -PassThru
-          cd ..
+          Start-Process -NoNewWindow -FilePath "websockify" -ArgumentList "--web=./noVNC 6080 localhost:5900" -PassThru
           Start-Sleep -Seconds 3
 
-      # 5. Устанавливаем cloudflared и запускаем туннель до порта 6080
+      # Устанавливаем cloudflared и создаём туннель до порта 6080
       - name: Install and run Cloudflare Tunnel
         shell: powershell
         run: |
@@ -59,17 +51,16 @@ jobs:
           Write-Host "Then click 'Connect' and enter password: MySecret123"
           Write-Host "============================================="
 
-      # 6. Ждём 6 часов (максимальное время жизни раннера)
+      # Держим сессию живой до 6 часов
       - name: Keep runner alive
         shell: powershell
         run: Start-Sleep -Seconds 21600
 
-      # 7. Архивируем всю домашнюю папку пользователя и загружаем в артефакт
+      # Сохраняем все пользовательские данные в архив
       - name: Save all user data to artifact
         shell: powershell
         run: |
           Write-Host "Saving your data..."
-          # Архивируем папку пользователя runneradmin (C:\Users\runneradmin)
           Compress-Archive -Path C:\Users\runneradmin\* -DestinationPath C:\temp\persistent_data.zip -Force
           Write-Host "Archive created."
 
