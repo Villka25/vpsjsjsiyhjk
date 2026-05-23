@@ -1,4 +1,4 @@
-name: Windows Desktop (VNC + bore)
+name: Windows Desktop (VNC via Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
@@ -7,35 +7,38 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
-      - name: Download and install TightVNC Server
+      - name: Install Desktop Experience & VNC
+        shell: powershell
         run: |
-          # Скачиваем установщик
+          # Устанавливаем TightVNC (тихая установка)
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
-          # Устанавливаем тихо
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server" VIEWER_ASSOCIATE_VNC_EXTENSION=0 SERVER_REGISTER_AS_SERVICE=0'
-          # Путь к исполняемым файлам TightVNC (добавляем в PATH)
-          $env:Path += ";C:\Program Files\TightVNC"
-          # Устанавливаем пароль для VNC (интерактивно через утилиту, здесь через реестр)
-          # Сгенерируем хэш пароля (алгоритм VNC)
-          # Для простоты используем временный пароль через утилиту tvnserver
+          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
+
+          # Устанавливаем пароль для VNC и запускаем сервер
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          # Запускаем сервер как приложение (без службы), чтобы не возиться с правами
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
 
-      - name: Install bore (Windows)
+      - name: Install Cloudflare Tunnel (cloudflared)
+        shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
-          Expand-Archive bore.zip -DestinationPath .
-          # Добавляем bore.exe в текущую папку и прописываем путь
-          $env:Path += ";$pwd"
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi" -OutFile cloudflared.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/i cloudflared.msi /quiet'
+          # Добавляем в PATH на всякий случай
+          $env:Path += ";C:\Program Files (x86)\cloudflared"
 
-      - name: Expose VNC via bore
+      - name: Expose VNC via Cloudflare Tunnel
+        shell: powershell
         run: |
-          # Запускаем bore в фоновом режиме (в Windows это можно сделать через Start-Process)
-          Start-Process -NoNewWindow -FilePath "./bore.exe" -ArgumentList "local 5900 --to bore.pub"
-          Start-Sleep -Seconds 5
-          Write-Host "Connect with VNC viewer to: bore.pub:PORT (the port will be printed by bore in the logs above)"
-          Write-Host "Password: MySecret123"
+          # Запускаем туннель до порта 5900 (VNC) и выводим URL в консоль
+          Start-Process -NoNewWindow -FilePath "cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900"
+          # Даем туннелю время на установку соединения
+          Start-Sleep -Seconds 10
+          
+          Write-Host "============================================="
+          Write-Host "Connect your VNC viewer to the URL above"
+          Write-Host "VNC Password: MySecret123"
+          Write-Host "============================================="
 
       - name: Keep runner alive
-        run: Start-Sleep -Seconds 21600   # 6 часов
+        shell: powershell
+        run: Start-Sleep -Seconds 21600
