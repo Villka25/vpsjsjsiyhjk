@@ -1,4 +1,4 @@
-name: Windows Desktop (VNC via Cloudflare Tunnel)
+name: Windows Desktop (VNC via Cloudflare Tunnel) - Fixed
 
 on:
   workflow_dispatch:
@@ -7,36 +7,56 @@ jobs:
   desktop:
     runs-on: windows-latest
     steps:
+      # 1. Установка и настройка VNC-сервера
       - name: Install TightVNC Server
         shell: powershell
         run: |
+          Write-Host "Downloading TightVNC..."
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          # Задаём пароль и запускаем VNC‑сервер
+          
+          Write-Host "Configuring VNC Server..."
+          # Задаём пароль и запускаем VNC-сервер в фоне
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          
+          Write-Host "TightVNC Server started successfully."
 
-      - name: Download portable cloudflared
+      # 2. Загрузка portable-версии cloudflared (.exe)
+      - name: Download cloudflared portable exe
         shell: powershell
         run: |
-          # Скачиваем zip‑архив с portable‑версией
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.zip" -OutFile cloudflared.zip
-          Expand-Archive cloudflared.zip -DestinationPath .
-          # Проверяем, что файл появился
-          if (-not (Test-Path ".\cloudflared.exe")) { throw "cloudflared.exe not found" }
+          Write-Host "Downloading cloudflared..."
+          # Скачиваем .exe напрямую, так как .zip версии не существует
+          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
+          
+          # Проверяем, что файл скачался
+          if (Test-Path "cloudflared.exe") {
+            Write-Host "cloudflared.exe downloaded successfully."
+          } else {
+            Write-Error "Failed to download cloudflared.exe"
+            exit 1
+          }
 
+      # 3. Запуск туннеля и вывод информации для подключения
       - name: Expose VNC via Cloudflare Tunnel
         shell: powershell
         run: |
-          # Запускаем туннель (используем полный путь к portable‑версии)
-          $cloudflared = "$pwd\cloudflared.exe"
-          Start-Process -NoNewWindow -FilePath $cloudflared -ArgumentList "tunnel --url tcp://localhost:5900"
-          Start-Sleep -Seconds 10
+          Write-Host "Starting Cloudflare Tunnel..."
+          # Запускаем туннель в фоновом процессе
+          $process = Start-Process -NoNewWindow -FilePath "$pwd\cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900" -PassThru
+          
+          # Ждем, пока туннель установится и выдаст URL
+          Start-Sleep -Seconds 15
+          
           Write-Host "============================================="
-          Write-Host "Connect your VNC viewer to the URL shown above"
+          Write-Host "VNC Server is ready!"
+          Write-Host "Connect your VNC viewer to the URL above (it will look like https://random-name.trycloudflare.com)"
           Write-Host "VNC Password: MySecret123"
           Write-Host "============================================="
 
+      # 4. Поддержание жизни раннера
       - name: Keep runner alive
         shell: powershell
         run: Start-Sleep -Seconds 21600
