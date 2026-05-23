@@ -1,69 +1,65 @@
-name: Ubuntu Desktop (noVNC + Cloudflare) – Final
+name: Windows Desktop (noVNC via Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
 
 jobs:
   desktop:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
-      - name: Install desktop, VNC, noVNC
+      # 1. Устанавливаем Python (есть на раннере) и настраиваем noVNC
+      - name: Setup Python and noVNC
+        shell: powershell
         run: |
-          sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common novnc
+          python --version
+          # Скачиваем noVNC (веб-клиент VNC) и websockify
+          git clone https://github.com/novnc/noVNC.git
+          git clone https://github.com/novnc/websockify.git
+          # Устанавливаем зависимости для websockify
+          cd websockify
+          python setup.py install
+          cd ..
 
-      - name: Install cloudflared
+      # 2. Устанавливаем TightVNC сервер и запускаем его
+      - name: Install and start TightVNC Server
+        shell: powershell
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          rm cloudflared-linux-amd64.deb
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
+          # Устанавливаем пароль и запускаем сервер
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
+          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          # Проверяем, что порт слушается
+          netstat -an | Select-String ":5900"
 
-      - name: Setup VNC and start desktop
+      # 3. Запускаем websockify для проброса VNC в WebSocket (порт 6080)
+      - name: Start websockify (VNC → WebSocket)
+        shell: powershell
         run: |
-          mkdir -p ~/.vnc
-          echo "secret" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          cat > ~/.vnc/xstartup << 'EOF'
-          #!/bin/sh
-          unset SESSION_MANAGER
-          unset DBUS_SESSION_BUS_ADDRESS
-          exec startxfce4
-          EOF
-          chmod +x ~/.vnc/xstartup
-          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
-          sleep 3
+          cd websockify
+          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "run.py 6080 localhost:5900" -PassThru
+          cd ..
+          Start-Sleep -Seconds 3
 
-      - name: Start noVNC (websockify)
+      # 4. Устанавливаем и запускаем Cloudflare Tunnel (cloudflared)
+      - name: Install and run Cloudflare Tunnel
+        shell: powershell
         run: |
-          websockify --web=/usr/share/novnc 6080 localhost:5901 &
-          sleep 3
+          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
+          # Запускаем туннель до порта 6080
+          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080" -PassThru
+          Start-Sleep -Seconds 15
+          Write-Host "============================================="
+          Write-Host "Desktop is ready!"
+          Write-Host "Look in the logs above for a line like:"
+          Write-Host "  https://<random-name>.trycloudflare.com"
+          Write-Host "Open that URL in your browser."
+          Write-Host "Then click 'Connect' and enter password: MySecret123"
+          Write-Host "============================================="
 
-      - name: Start Cloudflare Tunnel and capture URL
-        run: |
-          # Запускаем туннель в фоне, вывод пишем в файл
-          cloudflared tunnel --url http://localhost:6080 > /tmp/tunnel.log 2>&1 &
-          # Ждём, пока в логах появится URL (максимум 20 попыток по 3 секунды)
-          for i in $(seq 1 20); do
-            if grep -q 'trycloudflare.com' /tmp/tunnel.log; then
-              break
-            fi
-            sleep 3
-          done
-          # Извлекаем ссылку
-          LINK=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
-          echo "LINK=$LINK" >> $GITHUB_ENV
-          echo "Tunnel link captured: $LINK"
-
-      - name: Show final access info
-        run: |
-          echo "============================================="
-          echo "  YOUR REMOTE DESKTOP IS READY"
-          echo "============================================="
-          echo "  Link:     $LINK"
-          echo "  Password: secret"
-          echo "============================================="
-          echo "Open the link in a browser, click Connect,"
-          echo "and enter the password when prompted."
-
+      # 5. Держим сессию живой 6 часов
       - name: Keep runner alive
-        run: sleep 6h
+        shell: powershell
+        run: Start-Sleep -Seconds 21600
