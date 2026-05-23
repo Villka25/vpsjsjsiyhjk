@@ -1,4 +1,4 @@
-name: Ubuntu Desktop (noVNC via Cloudflare Tunnel)
+name: Ubuntu Desktop (noVNC + Cloudflare) – Final
 
 on:
   workflow_dispatch:
@@ -7,26 +7,18 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      # 1. Устанавливаем графическое окружение и VNC-сервер
-      - name: Install desktop and VNC
+      - name: Install desktop, VNC, noVNC
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common novnc
 
-      # 2. Устанавливаем noVNC (веб-клиент VNC)
-      - name: Install noVNC
-        run: |
-          sudo apt install -y novnc
-
-      # 3. Устанавливаем cloudflared (Cloudflare Tunnel)
       - name: Install cloudflared
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           rm cloudflared-linux-amd64.deb
 
-      # 4. Настраиваем пароль VNC и запускаем TigerVNC
-      - name: Setup VNC password and start VNC server
+      - name: Setup VNC and start desktop
         run: |
           mkdir -p ~/.vnc
           echo "secret" | vncpasswd -f > ~/.vnc/passwd
@@ -41,26 +33,37 @@ jobs:
           vncserver :1 -geometry 1280x720 -depth 24 -localhost no
           sleep 3
 
-      # 5. Запускаем noVNC, который слушает порт 6080 и подключается к VNC на порту 5901
-      - name: Start noVNC
+      - name: Start noVNC (websockify)
         run: |
-          # noVNC будет доступен на http://localhost:6080/vnc.html?host=localhost&port=5901
           websockify --web=/usr/share/novnc 6080 localhost:5901 &
           sleep 3
 
-      # 6. Пробрасываем порт 6080 через Cloudflare Tunnel (HTTPS)
-      - name: Expose noVNC via Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel and capture URL
         run: |
-          cloudflared tunnel --url http://localhost:6080 &
-          sleep 10
-          echo "============================================="
-          echo "Desktop is ready!"
-          echo "Look in the logs above for a line like:"
-          echo "  https://<random-name>.trycloudflare.com"
-          echo "Open that URL in your browser."
-          echo "VNC Password: secret"
-          echo "============================================="
+          # Запускаем туннель в фоне, вывод пишем в файл
+          cloudflared tunnel --url http://localhost:6080 > /tmp/tunnel.log 2>&1 &
+          # Ждём, пока в логах появится URL (максимум 20 попыток по 3 секунды)
+          for i in $(seq 1 20); do
+            if grep -q 'trycloudflare.com' /tmp/tunnel.log; then
+              break
+            fi
+            sleep 3
+          done
+          # Извлекаем ссылку
+          LINK=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
+          echo "LINK=$LINK" >> $GITHUB_ENV
+          echo "Tunnel link captured: $LINK"
 
-      # 7. Держим сессию живой до 6 часов
+      - name: Show final access info
+        run: |
+          echo "============================================="
+          echo "  YOUR REMOTE DESKTOP IS READY"
+          echo "============================================="
+          echo "  Link:     $LINK"
+          echo "  Password: secret"
+          echo "============================================="
+          echo "Open the link in a browser, click Connect,"
+          echo "and enter the password when prompted."
+
       - name: Keep runner alive
         run: sleep 6h
