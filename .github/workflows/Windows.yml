@@ -1,53 +1,66 @@
-name: Windows Desktop (VNC via bore)
+name: Ubuntu Desktop (noVNC via Cloudflare Tunnel)
 
 on:
   workflow_dispatch:
 
 jobs:
   desktop:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: Install TightVNC Server
-        shell: powershell
+      # 1. Устанавливаем графическое окружение и VNC-сервер
+      - name: Install desktop and VNC
         run: |
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
 
-      - name: Configure and start VNC Server
-        shell: powershell
+      # 2. Устанавливаем noVNC (веб-клиент VNC)
+      - name: Install noVNC
         run: |
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
+          sudo apt install -y novnc
 
-      - name: Open firewall port 5900
-        shell: powershell
+      # 3. Устанавливаем cloudflared (Cloudflare Tunnel)
+      - name: Install cloudflared
         run: |
-          New-NetFirewallRule -DisplayName "Allow VNC 5900" -Direction Inbound -Protocol TCP -LocalPort 5900 -Action Allow
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          rm cloudflared-linux-amd64.deb
 
-      - name: Download bore
-        shell: powershell
+      # 4. Настраиваем пароль VNC и запускаем TigerVNC
+      - name: Setup VNC password and start VNC server
         run: |
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
-          Expand-Archive bore.zip -DestinationPath .
-          if (!(Test-Path ".\bore.exe")) { Write-Error "bore.exe not found"; exit 1 }
+          mkdir -p ~/.vnc
+          echo "secret" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+          sleep 3
 
-      - name: Expose VNC via bore
-        shell: powershell
+      # 5. Запускаем noVNC, который слушает порт 6080 и подключается к VNC на порту 5901
+      - name: Start noVNC
         run: |
-          Write-Host "Starting bore tunnel on port 5900..."
-          Start-Process -NoNewWindow -FilePath ".\bore.exe" -ArgumentList "local 5900 --to bore.pub" -PassThru
-          Start-Sleep -Seconds 10
-          Write-Host "============================================="
-          Write-Host "To connect:"
-          Write-Host "1. Open a VNC client (TightVNC Viewer, RealVNC, etc.)"
-          Write-Host "2. In the logs above, find a line like:"
-          Write-Host "   listening at bore.pub:12345"
-          Write-Host "3. Connect to that address (bore.pub:12345)"
-          Write-Host "4. Password: MySecret123"
-          Write-Host "============================================="
-          Write-Host "Waiting for connections... (session up to 6 hours)"
+          # noVNC будет доступен на http://localhost:6080/vnc.html?host=localhost&port=5901
+          websockify --web=/usr/share/novnc 6080 localhost:5901 &
+          sleep 3
 
+      # 6. Пробрасываем порт 6080 через Cloudflare Tunnel (HTTPS)
+      - name: Expose noVNC via Cloudflare Tunnel
+        run: |
+          cloudflared tunnel --url http://localhost:6080 &
+          sleep 10
+          echo "============================================="
+          echo "Desktop is ready!"
+          echo "Look in the logs above for a line like:"
+          echo "  https://<random-name>.trycloudflare.com"
+          echo "Open that URL in your browser."
+          echo "VNC Password: secret"
+          echo "============================================="
+
+      # 7. Держим сессию живой до 6 часов
       - name: Keep runner alive
-        shell: powershell
-        run: Start-Sleep -Seconds 21600
+        run: sleep 6h
