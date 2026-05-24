@@ -25,13 +25,12 @@ jobs:
           ./buildaa.x86_64 -batchmode -nographics -port 7777 &
           sleep 3
 
-      - name: Expose server via Pinggy (auto-restart)
+      - name: Expose server via Pinggy (TCP, auto-restart)
         run: |
-          # Запускаем туннель в цикле с перезапуском при обрыве
           (
             while true; do
-              echo "Запуск туннеля Pinggy..."
-              ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:7777 a.pinggy.io 2>&1 | while IFS= read -r line; do
+              echo "Запуск TCP-туннеля Pinggy..."
+              ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:7777 tcp@a.pinggy.io 2>&1 | while IFS= read -r line; do
                 echo "$line"
                 if [[ "$line" == *"tcp://"* ]]; then
                   ADDR=$(echo "$line" | grep -oP 'tcp://\K[^ ]+')
