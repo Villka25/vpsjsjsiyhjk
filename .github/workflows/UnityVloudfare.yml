@@ -32,8 +32,7 @@ jobs:
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          echo "$PLAYIT_SECRET" > secret.txt
-          ./playit --secret-file secret.txt &
+          ./playit --secret "$PLAYIT_SECRET" &
           sleep 5
           echo "Сервер доступен по адресу из панели playit.gg (порт 7777 проброшен)"
 
