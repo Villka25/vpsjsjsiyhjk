@@ -8,9 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libstdc++6 wget unzip
+        run: sudo apt update && sudo apt install -y libstdc++6 wget unzip
 
       - name: Download server build
         run: |
@@ -21,7 +19,7 @@ jobs:
 
       - name: Install playit
         run: |
-          curl -fsSL https://playit.gg/downloads/playit-linux-amd64 -o playit
+          wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-agent-linux-amd64 -O playit
           chmod +x playit
 
       - name: Start game server
@@ -37,7 +35,7 @@ jobs:
           echo "$PLAYIT_SECRET" > secret.txt
           ./playit --secret-file secret.txt &
           sleep 5
-          echo "Сервер запущен. Адрес для подключения указан в панели playit.gg"
+          echo "Сервер доступен по адресу из панели playit.gg (порт 7777 проброшен)"
 
       - name: Keep alive (max 6 hours)
         run: sleep 6h
