@@ -14,7 +14,7 @@ jobs:
 
       - name: Download server build
         run: |
-          wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
+          wget -O build.zip "https://files.catbox.moe/mh50o5.zip"
           unzip build.zip -d server
           rm build.zip
           chmod +x server/buildaa.x86_64
