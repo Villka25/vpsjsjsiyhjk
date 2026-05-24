@@ -1,0 +1,61 @@
+name: Unity Server (bore)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libstdc++6 wget unzip
+
+      - name: Download server build
+        run: |
+          # Замени ссылку на свой актуальный build.zip
+          wget -O build.zip "https://files.catbox.moe/b3suui.zip"
+          unzip build.zip -d server
+          rm build.zip
+          chmod +x server/buildaa.x86_64
+
+      - name: Install bore
+        run: |
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+
+      - name: Start game server
+        run: |
+          cd server
+          ./buildaa.x86_64 -batchmode -nographics -port 7777 &
+          sleep 3
+
+      - name: Expose server via bore (auto-restart)
+        run: |
+          # Запускаем bore в бесконечном цикле с перезапуском при падении
+          (
+            while true; do
+              echo "Bore tunnel starting (or restarted)..."
+              bore local 7777 --to bore.pub 2>&1 | while IFS= read -r line; do
+                echo "$line"
+                if [[ "$line" == *"listening at bore.pub:"* ]]; then
+                  PORT=$(echo "$line" | grep -oP 'bore\.pub:\K\d+')
+                  echo "============================================"
+                  echo "Сервер доступен: bore.pub:$PORT"
+                  echo "============================================"
+                fi
+              done
+              echo "Bore tunnel exited. Restarting in 5 seconds..."
+              sleep 5
+            done
+          ) &
+          # Ждём, чтобы туннель успел подняться
+          sleep 10
+          echo "Туннель bore запущен в фоне. Проверьте логи выше для адреса и порта."
+
+      - name: Keep alive (max 6 hours)
+        run: sleep 6h
