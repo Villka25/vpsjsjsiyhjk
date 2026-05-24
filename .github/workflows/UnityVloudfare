@@ -1,0 +1,49 @@
+name: Unity Server (Cloudflare Tunnel)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libstdc++6 wget unzip
+
+      - name: Download server build
+        run: |
+          # Замени ссылку на свой актуальный build.zip
+          wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
+          unzip build.zip -d server
+          rm build.zip
+          chmod +x server/buildaa.x86_64
+
+      - name: Install cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+      - name: Start game server
+        run: |
+          cd server
+          ./buildaa.x86_64 -batchmode -nographics -port 7777 &
+          sleep 3
+
+      - name: Expose server via Cloudflare Tunnel
+        run: |
+          # Создаём временный туннель без авторизации (trycloudflare.com)
+          cloudflared tunnel --url tcp://localhost:7777 &
+          sleep 10
+          # Извлекаем сгенерированный адрес из логов
+          echo "============================================"
+          echo "Сервер доступен по адресу:"
+          cloudflared tunnel info --url 2>/dev/null || true
+          echo "============================================"
+          echo "Ищите в логах выше строку типа: 'https://something.trycloudflare.com'"
+          echo "Подключайтесь: что-то-там.trycloudflare.com:443"
+
+      - name: Keep alive (max 6 hours)
+        run: sleep 6h
