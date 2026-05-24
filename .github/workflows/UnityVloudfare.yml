@@ -1,4 +1,4 @@
-name: Unity Server (Cloudflare Tunnel)
+name: Unity Server (playit.gg)
 
 on:
   workflow_dispatch:
@@ -14,17 +14,15 @@ jobs:
 
       - name: Download server build
         run: |
-          # Замени ссылку на свой актуальный build.zip
           wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
           unzip build.zip -d server
           rm build.zip
           chmod +x server/buildaa.x86_64
 
-      - name: Install cloudflared
+      - name: Install playit
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared-linux-amd64
-          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+          curl -fsSL https://playit.gg/downloads/playit-linux-amd64 -o playit
+          chmod +x playit
 
       - name: Start game server
         run: |
@@ -32,18 +30,14 @@ jobs:
           ./buildaa.x86_64 -batchmode -nographics -port 7777 &
           sleep 3
 
-      - name: Expose server via Cloudflare Tunnel
+      - name: Start playit tunnel
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          # Создаём временный туннель без авторизации (trycloudflare.com)
-          cloudflared tunnel --url tcp://localhost:7777 &
-          sleep 10
-          # Извлекаем сгенерированный адрес из логов
-          echo "============================================"
-          echo "Сервер доступен по адресу:"
-          cloudflared tunnel info --url 2>/dev/null || true
-          echo "============================================"
-          echo "Ищите в логах выше строку типа: 'https://something.trycloudflare.com'"
-          echo "Подключайтесь: что-то-там.trycloudflare.com:443"
+          echo "$PLAYIT_SECRET" > secret.txt
+          ./playit --secret-file secret.txt &
+          sleep 5
+          echo "Сервер запущен. Адрес для подключения указан в панели playit.gg"
 
       - name: Keep alive (max 6 hours)
         run: sleep 6h
