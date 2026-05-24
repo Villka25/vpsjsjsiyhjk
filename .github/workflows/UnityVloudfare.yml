@@ -13,7 +13,7 @@ jobs:
           sudo apt update
           sudo apt install -y libstdc++6 wget unzip
 
-      # 2. Скачиваем серверный билд (замените ссылку на актуальный build.zip)
+      # 2. Скачиваем серверный билд (замени ссылку на актуальный build.zip)
       - name: Download server build
         run: |
           wget -O build.zip "https://files.catbox.moe/4yd0xw.zip"
@@ -21,7 +21,7 @@ jobs:
           rm build.zip
           chmod +x server/buildaa.x86_64
 
-      # 3. Устанавливаем playit agent (конкретная рабочая версия)
+      # 3. Устанавливаем playit agent (рабочая версия)
       - name: Install playit
         run: |
           wget -q -O playit https://github.com/playit-cloud/playit-agent/releases/download/v1.0.4/playit-linux-amd64
@@ -34,15 +34,18 @@ jobs:
           ./buildaa.x86_64 -batchmode -nographics -port 7777 &
           sleep 3
 
-      # 5. Создаём туннель playit (используем секрет и безопасную папку для сокета)
+      # 5. Создаём туннель playit (без секрета — будет показан Claim Code)
       - name: Start playit tunnel
-        env:
-          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
           mkdir -p /tmp/playit
-          ./playit --secret "$PLAYIT_SECRET" --socket-path /tmp/playit/playit.sock &
+          ./playit --socket-path /tmp/playit/playit.sock 2>&1 | tee playit.log &
           sleep 5
-          echo "Сервер доступен по адресу из панели playit.gg (порт 7777 проброшен)"
+          echo "============================================"
+          echo "Claim Code (скопируй и введи на https://playit.gg/claim):"
+          grep -oP 'Claim Code: \K[\w-]+' playit.log || echo "Если код не появился, смотри полные логи выше"
+          echo "============================================"
+          echo "После ввода кода адрес сервера появится в панели playit.gg (раздел Tunnels)"
+          echo "Адрес будет постоянным, порт вида something.playit.gg:XXXXX"
 
       # 6. Держим workflow активным до 6 часов
       - name: Keep alive (max 6 hours)
