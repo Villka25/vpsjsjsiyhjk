@@ -1,4 +1,4 @@
-name: Unity Server (serveo)
+name: Unity Server (Pinggy)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y libstdc++6 wget unzip ssh
+        run: |
+          sudo apt update
+          sudo apt install -y libstdc++6 wget unzip openssh-client
 
       - name: Download server build
         run: |
@@ -23,19 +25,27 @@ jobs:
           ./buildaa.x86_64 -batchmode -nographics -port 7777 &
           sleep 3
 
-      - name: Expose via serveo
+      - name: Expose server via Pinggy (auto-restart)
         run: |
-          ssh -o StrictHostKeyChecking=no -R 0:localhost:7777 serveo.net 2>&1 | while IFS= read -r line; do
-            echo "$line"
-            if [[ "$line" == *"Forwarding TCP connections from serveo.net:"* ]]; then
-              ADDR=$(echo "$line" | grep -oP 'serveo\.net:\d+')
-              echo "============================================"
-              echo "Сервер доступен: $ADDR"
-              echo "============================================"
-            fi
-          done &
+          # Запускаем туннель в цикле с перезапуском при обрыве
+          (
+            while true; do
+              echo "Запуск туннеля Pinggy..."
+              ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:7777 a.pinggy.io 2>&1 | while IFS= read -r line; do
+                echo "$line"
+                if [[ "$line" == *"tcp://"* ]]; then
+                  ADDR=$(echo "$line" | grep -oP 'tcp://\K[^ ]+')
+                  echo "============================================"
+                  echo "Сервер доступен: $ADDR"
+                  echo "============================================"
+                fi
+              done
+              echo "Туннель упал, перезапуск через 5 секунд..."
+              sleep 5
+            done
+          ) &
           sleep 10
-          echo "Адрес сервера смотри выше в логах"
+          echo "Туннель Pinggy запущен, адрес смотри выше"
 
       - name: Keep alive (max 6 hours)
         run: sleep 6h
