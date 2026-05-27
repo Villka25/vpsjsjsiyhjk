@@ -1,0 +1,41 @@
+name: Декомпиляция .unity3d
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: 'https://files.catbox.moe/v85det.unity3d'
+        required: true
+        type: string
+
+jobs:
+  decompile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Скачиваем .unity3d файл
+        run: |
+          echo "Загружаем файл из ${{ github.event.inputs.file_url }}"
+          wget -O input.unity3d "${{ github.event.inputs.file_url }}"
+
+      - name: Установка .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Скачиваем AssetRipper (CLI)
+        run: |
+          ASSET_RIPPER_VERSION="1.2.0"  # Актуальная версия, можно проверить на https://github.com/AssetRipper/AssetRipper/releases
+          wget "https://github.com/AssetRipper/AssetRipper/releases/download/${ASSET_RIPPER_VERSION}/AssetRipper_linux_x64.zip"
+          unzip AssetRipper_linux_x64.zip -d AssetRipper
+          chmod +x AssetRipper/AssetRipper.CLI
+
+      - name: Декомпиляция
+        run: |
+          mkdir output
+          ./AssetRipper/AssetRipper.CLI input.unity3d -o output
+
+      - name: Загружаем результат
+        uses: actions/upload-artifact@v4
+        with:
+          name: decompiled-unity3d
+          path: output/
