@@ -15,6 +15,7 @@ jobs:
       - name: Скачиваем файл
         run: |
           wget -O input.unity3d "${{ github.event.inputs.file_url }}"
+          echo "Размер файла: $(stat -c %s input.unity3d) байт"
 
       - name: Установка Python
         uses: actions/setup-python@v5
@@ -24,22 +25,49 @@ jobs:
       - name: Установка UnityPy
         run: pip install UnityPy
 
-      - name: Декомпиляция
+      - name: Декомпиляция с сохранением всех ресурсов
         run: |
           python -c "
           import os, UnityPy
+
           env = UnityPy.load('input.unity3d')
           os.makedirs('output', exist_ok=True)
+
+          count = 0
+          # Пробуем извлечь через container
           for path, obj in env.container.items():
               try:
                   data = obj.read()
-                  data.export('output')
+                  # Заменяем слэши, чтобы получить допустимое имя файла
+                  safe_name = path.replace('/', '_').replace('\\\\', '_')
+                  data.save(os.path.join('output', safe_name))
+                  count += 1
               except Exception as e:
-                  print(f'Не удалось экспортировать объект {path}: {e}')
-          print('Готово. Результат в папке output.')
+                  print(f'Ошибка экспорта {path}: {e}')
+
+          # Если container ничего не дал, пробуем objects
+          if count == 0:
+              print('Контейнер пуст, пробуем objects...')
+              for obj in env.objects:
+                  try:
+                      data = obj.read()
+                      name = f'{obj.type.name}_{obj.path_id}'
+                      data.save(os.path.join('output', name))
+                      count += 1
+                  except Exception as e:
+                      print(f'Ошибка: {e}')
+
+          print(f'Экспортировано объектов: {count}')
+          if count == 0:
+              raise Exception('Не удалось извлечь ни одного объекта! Проверьте файл input.unity3d')
           "
 
-      - name: Загрузить результат
+      - name: Проверяем выходную папку
+        run: |
+          ls -la output/
+          echo "Количество файлов: $(ls -1 output/ | wc -l)"
+
+      - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
           name: decompiled-unity3d
