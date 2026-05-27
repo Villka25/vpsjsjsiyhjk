@@ -1,29 +1,25 @@
-name: Декомпиляция .unity3d с catbox
+name: Декомпиляция v85det.unity3d
 
 on:
-  workflow_dispatch:
-    inputs:
-      file_url:
-        description: 'https://files.catbox.moe/v85det.unity3d'
-        required: true
-        type: string
+  workflow_dispatch:   # запускается вручную
 
 jobs:
   decompile:
     runs-on: ubuntu-latest
     steps:
-      - name: Скачиваем файл
+      - name: Скачиваем файл по фиксированной ссылке
         run: |
-          echo "Загружаем: ${{ github.event.inputs.file_url }}"
-          curl -L -o input.unity3d "${{ github.event.inputs.file_url }}"
+          echo "Загружаем https://files.catbox.moe/v85det.unity3d"
+          curl -L -o input.unity3d "https://files.catbox.moe/v85det.unity3d"
           size=$(stat -c %s input.unity3d)
           echo "Размер файла: $size байт"
           if [ $size -lt 10240 ]; then
-            echo "Файл слишком маленький! Похоже, скачалась страница, а не сам файл. Проверьте, что ссылка прямая (должна заканчиваться на .unity3d)."
+            echo "Файл слишком маленький — возможно, скачалась не та страница."
             head -c 500 input.unity3d
             exit 1
           fi
           file input.unity3d
+          echo "=== Первые 200 байт ==="
           head -c 200 input.unity3d | xxd
 
       - name: Установка Python и UnityPy
@@ -31,39 +27,43 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Попытка декомпиляции через UnityPy
-        continue-on-error: true
+      - name: Декомпиляция через UnityPy
         run: |
           pip install UnityPy
           python -c "
           import UnityPy, os
           env = UnityPy.load('input.unity3d')
-          os.makedirs('output_unitypy', exist_ok=True)
+          os.makedirs('output', exist_ok=True)
+          count = 0
           for path, obj in env.container.items():
-              data = obj.read()
-              safe = path.replace('/', '_')
-              data.save(os.path.join('output_unitypy', safe))
-          print('UnityPy: объекты извлечены в output_unitypy')
+              try:
+                  data = obj.read()
+                  safe_name = path.replace('/', '_')
+                  data.save(os.path.join('output', safe_name))
+                  count += 1
+              except Exception as e:
+                  print(f'Ошибка при {path}: {e}')
+          # Если container пуст, пробуем objects
+          if count == 0:
+              print('Контейнер пуст, пробуем извлечь все объекты...')
+              for obj in env.objects:
+                  try:
+                      data = obj.read()
+                      name = f'{obj.type.name}_{obj.path_id}'
+                      data.save(os.path.join('output', name))
+                      count += 1
+                  except Exception as e:
+                      print(f'Ошибка при объекте {obj}: {e}')
+          print(f'Извлечено объектов: {count}')
           "
 
-      - name: Попытка декомпиляции через AssetRipper CLI
-        if: always()
+      - name: Проверка результата
         run: |
-          wget -q https://github.com/AssetRipper/AssetRipper/releases/download/0.3.1.2/AssetRipper_linux_x64.zip
-          unzip -q AssetRipper_linux_x64.zip -d ripper
-          chmod +x ripper/AssetRipperConsole
-          ./ripper/AssetRipperConsole input.unity3d -o output_ripper || echo "AssetRipperConsole завершился с ошибкой"
-
-      - name: Сбор результатов
-        if: always()
-        run: |
-          mkdir -p final_output
-          cp -r output_unitypy/* final_output/ 2>/dev/null || true
-          cp -r output_ripper/* final_output/ 2>/dev/null || true
-          echo "Извлечено файлов: $(find final_output -type f | wc -l)"
+          echo "Файлов в output: $(find output -type f | wc -l)"
+          ls -la output/ || echo "Папка output пуста"
 
       - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
-          name: extracted-assets
-          path: final_output/
+          name: decompiled-v85det
+          path: output/
