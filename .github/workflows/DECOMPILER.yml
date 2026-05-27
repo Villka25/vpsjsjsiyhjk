@@ -27,34 +27,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Декомпиляция через UnityPy
+      - name: Декомпиляция через UnityPy (правильный экспорт)
         run: |
           pip install UnityPy
           python -c "
           import UnityPy, os
           env = UnityPy.load('input.unity3d')
           os.makedirs('output', exist_ok=True)
-          count = 0
-          for path, obj in env.container.items():
-              try:
-                  data = obj.read()
-                  safe_name = path.replace('/', '_')
-                  data.save(os.path.join('output', safe_name))
-                  count += 1
-              except Exception as e:
-                  print(f'Ошибка при {path}: {e}')
-          # Если container пуст, пробуем objects
-          if count == 0:
-              print('Контейнер пуст, пробуем извлечь все объекты...')
-              for obj in env.objects:
-                  try:
-                      data = obj.read()
-                      name = f'{obj.type.name}_{obj.path_id}'
-                      data.save(os.path.join('output', name))
-                      count += 1
-                  except Exception as e:
-                      print(f'Ошибка при объекте {obj}: {e}')
-          print(f'Извлечено объектов: {count}')
+          # Рекурсивно экспортируем всё
+          env.export('output')
+          print('Экспорт завершён.')
           "
 
       - name: Проверка результата
