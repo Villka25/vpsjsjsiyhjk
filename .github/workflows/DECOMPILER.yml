@@ -1,25 +1,22 @@
 name: Декомпиляция v85det.unity3d
 
 on:
-  workflow_dispatch:   # запускается вручную
+  workflow_dispatch:
 
 jobs:
   decompile:
     runs-on: ubuntu-latest
     steps:
-      - name: Скачиваем файл по фиксированной ссылке
+      - name: Скачиваем файл
         run: |
-          echo "Загружаем https://files.catbox.moe/v85det.unity3d"
           curl -L -o input.unity3d "https://files.catbox.moe/v85det.unity3d"
           size=$(stat -c %s input.unity3d)
           echo "Размер файла: $size байт"
           if [ $size -lt 10240 ]; then
-            echo "Файл слишком маленький — возможно, скачалась не та страница."
-            head -c 500 input.unity3d
+            echo "Файл слишком маленький"
             exit 1
           fi
           file input.unity3d
-          echo "=== Первые 200 байт ==="
           head -c 200 input.unity3d | xxd
 
       - name: Установка Python и UnityPy
@@ -27,22 +24,38 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Декомпиляция через UnityPy (правильный экспорт)
+      - name: Декомпиляция через UnityPy
         run: |
           pip install UnityPy
           python -c "
           import UnityPy, os
+
           env = UnityPy.load('input.unity3d')
-          os.makedirs('output', exist_ok=True)
-          # Рекурсивно экспортируем всё
-          env.export('output')
-          print('Экспорт завершён.')
+          output_dir = os.path.abspath('output')
+          os.makedirs(output_dir, exist_ok=True)
+          original_dir = os.getcwd()
+
+          # Временно переходим в output, чтобы data.save() сохранял туда
+          os.chdir(output_dir)
+          try:
+              count = 0
+              for obj in env.objects:
+                  try:
+                      data = obj.read()
+                      # Сохраняем без аргументов — каждый тип сам знает своё расширение
+                      data.save()
+                      count += 1
+                  except Exception as e:
+                      print(f'Пропущен объект {obj}: {e}')
+              print(f'Успешно сохранено объектов: {count}')
+          finally:
+              os.chdir(original_dir)
           "
 
       - name: Проверка результата
         run: |
           echo "Файлов в output: $(find output -type f | wc -l)"
-          ls -la output/ || echo "Папка output пуста"
+          ls -la output/
 
       - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
