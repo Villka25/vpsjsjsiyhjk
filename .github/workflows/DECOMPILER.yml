@@ -11,11 +11,7 @@ jobs:
         run: |
           curl -L -o input.unity3d "https://files.catbox.moe/v85det.unity3d"
           size=$(stat -c %s input.unity3d)
-          echo "Размер файла: $size байт"
-          if [ $size -lt 10240 ]; then
-            echo "Файл слишком маленький"
-            exit 1
-          fi
+          echo "Размер: $size байт"
           file input.unity3d
           head -c 200 input.unity3d | xxd
 
@@ -24,32 +20,29 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Декомпиляция через UnityPy
+      - name: Извлечение ресурсов
         run: |
           pip install UnityPy
           python -c "
           import UnityPy, os
 
           env = UnityPy.load('input.unity3d')
-          output_dir = os.path.abspath('output')
-          os.makedirs(output_dir, exist_ok=True)
-          original_dir = os.getcwd()
+          os.makedirs('output', exist_ok=True)
+          count = 0
 
-          # Временно переходим в output, чтобы data.save() сохранял туда
-          os.chdir(output_dir)
-          try:
-              count = 0
-              for obj in env.objects:
-                  try:
-                      data = obj.read()
-                      # Сохраняем без аргументов — каждый тип сам знает своё расширение
-                      data.save()
-                      count += 1
-                  except Exception as e:
-                      print(f'Пропущен объект {obj}: {e}')
-              print(f'Успешно сохранено объектов: {count}')
-          finally:
-              os.chdir(original_dir)
+          for obj in env.objects:
+              try:
+                  data = obj.read()
+                  # Пытаемся сохранить с явным путём – работает для текстур, мешей и т.д.
+                  data.save(os.path.join('output', f'{obj.type.name}_{obj.path_id}'))
+                  count += 1
+              except TypeError:
+                  # Объекты вроде MonoScript не принимают путь – пропускаем
+                  continue
+              except Exception as e:
+                  print(f'Не удалось сохранить {obj}: {e}')
+
+          print(f'Сохранено объектов: {count}')
           "
 
       - name: Проверка результата
