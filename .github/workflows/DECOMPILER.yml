@@ -1,4 +1,4 @@
-name: Декомпиляция v85det.unity3d
+name: Декомпиляция v85det.unity3d (AssetRipper Mono)
 
 on:
   workflow_dispatch:
@@ -10,48 +10,32 @@ jobs:
       - name: Скачиваем файл
         run: |
           curl -L -o input.unity3d "https://files.catbox.moe/v85det.unity3d"
-          size=$(stat -c %s input.unity3d)
-          echo "Размер: $size байт"
+          echo "Размер: $(stat -c %s input.unity3d) байт"
           file input.unity3d
-          head -c 200 input.unity3d | xxd
 
-      - name: Установка Python и UnityPy
-        uses: actions/setup-python@v5
+      - name: Установка .NET 8.0
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: '3.11'
+          dotnet-version: '8.0.x'
 
-      - name: Извлечение ресурсов
+      - name: Скачиваем AssetRipper CLI (последняя версия)
         run: |
-          pip install UnityPy
-          python -c "
-          import UnityPy, os
+          wget -q "https://github.com/AssetRipper/AssetRipper/releases/download/1.2.3/AssetRipper_linux_x64_CLI.zip"
+          unzip -q AssetRipper_linux_x64_CLI.zip -d ripper
+          chmod +x ripper/AssetRipper.CLI
 
-          env = UnityPy.load('input.unity3d')
-          os.makedirs('output', exist_ok=True)
-          count = 0
-
-          for obj in env.objects:
-              try:
-                  data = obj.read()
-                  # Пытаемся сохранить с явным путём – работает для текстур, мешей и т.д.
-                  data.save(os.path.join('output', f'{obj.type.name}_{obj.path_id}'))
-                  count += 1
-              except TypeError:
-                  # Объекты вроде MonoScript не принимают путь – пропускаем
-                  continue
-              except Exception as e:
-                  print(f'Не удалось сохранить {obj}: {e}')
-
-          print(f'Сохранено объектов: {count}')
-          "
+      - name: Декомпиляция
+        run: |
+          mkdir output
+          ./ripper/AssetRipper.CLI input.unity3d -o output
 
       - name: Проверка результата
         run: |
-          echo "Файлов в output: $(find output -type f | wc -l)"
+          echo "Извлечено файлов: $(find output -type f | wc -l)"
           ls -la output/
 
       - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
-          name: decompiled-v85det
+          name: decompiled-v85det-mono
           path: output/
