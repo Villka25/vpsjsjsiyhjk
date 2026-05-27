@@ -1,4 +1,4 @@
-name: Декомпиляция .unity3d
+name: Декомпиляция .unity3d (UnityPy)
 
 on:
   workflow_dispatch:
@@ -12,29 +12,35 @@ jobs:
   decompile:
     runs-on: ubuntu-latest
     steps:
-      - name: Скачиваем .unity3d файл
+      - name: Скачиваем файл
         run: |
-          echo "Загружаем файл из ${{ github.event.inputs.file_url }}"
           wget -O input.unity3d "${{ github.event.inputs.file_url }}"
 
-      - name: Установка .NET 8.0
-        uses: actions/setup-dotnet@v4
+      - name: Установка Python и UnityPy
+        uses: actions/setup-python@v5
         with:
-          dotnet-version: '8.0.x'
+          python-version: '3.11'
 
-      - name: Скачиваем AssetRipper (CLI)
-        run: |
-          ASSET_RIPPER_VERSION="1.2.0"  # Актуальная версия, можно проверить на https://github.com/AssetRipper/AssetRipper/releases
-          wget "https://github.com/AssetRipper/AssetRipper/releases/download/${ASSET_RIPPER_VERSION}/AssetRipper_linux_x64.zip"
-          unzip AssetRipper_linux_x64.zip -d AssetRipper
-          chmod +x AssetRipper/AssetRipper.CLI
+      - name: Установка UnityPy
+        run: pip install unitypy
 
       - name: Декомпиляция
         run: |
-          mkdir output
-          ./AssetRipper/AssetRipper.CLI input.unity3d -o output
+          python -c "
+          import os, unitypy
+          env = unitypy.Environment()
+          env.load_file('input.unity3d')
+          os.makedirs('output', exist_ok=True)
+          for obj in env.objects:
+              try:
+                  data = obj.read()
+                  data.export('output')
+              except Exception as e:
+                  print(f'Не удалось экспортировать объект {obj}: {e}')
+          print('Готово. Результат в папке output.')
+          "
 
-      - name: Загружаем результат
+      - name: Загрузить результат
         uses: actions/upload-artifact@v4
         with:
           name: decompiled-unity3d
