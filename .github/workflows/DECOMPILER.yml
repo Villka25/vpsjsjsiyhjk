@@ -16,27 +16,26 @@ jobs:
         run: |
           wget -O input.unity3d "${{ github.event.inputs.file_url }}"
 
-      - name: Установка Python и UnityPy
+      - name: Установка Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Установка UnityPy
-        run: pip install unitypy
+        run: pip install UnityPy
 
       - name: Декомпиляция
         run: |
           python -c "
-          import os, unitypy
-          env = unitypy.Environment()
-          env.load_file('input.unity3d')
+          import os, UnityPy
+          env = UnityPy.load('input.unity3d')
           os.makedirs('output', exist_ok=True)
-          for obj in env.objects:
+          for path, obj in env.container.items():
               try:
                   data = obj.read()
                   data.export('output')
               except Exception as e:
-                  print(f'Не удалось экспортировать объект {obj}: {e}')
+                  print(f'Не удалось экспортировать объект {path}: {e}')
           print('Готово. Результат в папке output.')
           "
 
