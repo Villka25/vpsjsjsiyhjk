@@ -4,6 +4,14 @@
 #include <vector>
 #include <cstring>
 
+// Определяем min/max на случай, если их нет (как в MSVC или mingw)
+#ifndef min
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif
+
 // Константы
 #define WIDTH  800
 #define HEIGHT 600
@@ -48,7 +56,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE: {
             InitGraphics(hWnd);
-            ClearCanvas(RGB(255,255,255)); // белый фон
+            ClearCanvas(RGB(255,255,255));
             // Создание меню
             HMENU hMenu = CreateMenu();
             HMENU hFileMenu = CreatePopupMenu();
@@ -106,7 +114,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if(isDrawing) {
                 isDrawing = false;
                 shapeEnd = endPt;
-                FinalizeShape();          // рисуем окончательную фигуру на битмапе
+                FinalizeShape();
                 shapeInProgress = false;
                 ReleaseCapture();
                 InvalidateRect(hWnd, NULL, FALSE);
@@ -116,7 +124,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
-            // Копируем из памяти в окно
             if(hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
                 SelectObject(hdcMem, hBitmap);
@@ -126,7 +133,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                            hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
                 DeleteDC(hdcMem);
             }
-            // Поверх рисуем временную фигуру (резиновая нить)
             if(shapeInProgress) {
                 RenderTemporaryShape(hdc);
             }
@@ -135,7 +141,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         case WM_COMMAND: {
             switch(LOWORD(wParam)) {
-                case 1001: { // Открыть BMP
+                case 1001: {
                     OPENFILENAME ofn = {0};
                     char file[MAX_PATH] = "";
                     ofn.lStructSize = sizeof(ofn);
@@ -149,7 +155,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     break;
                 }
-                case 1002: { // Сохранить BMP
+                case 1002: {
                     OPENFILENAME ofn = {0};
                     char file[MAX_PATH] = "";
                     ofn.lStructSize = sizeof(ofn);
@@ -163,10 +169,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     break;
                 }
-                case 1003: // Печать
+                case 1003:
                     PrintImage(hWnd);
                     break;
-                case 1004: // Выход
+                case 1004:
                     PostQuitMessage(0);
                     break;
                 case 2001: currentTool = TOOL_PEN; break;
@@ -205,7 +211,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
-// Инициализация графики: создаём HDC памяти и битмап
 void InitGraphics(HWND hWnd) {
     HDC hdc = GetDC(hWnd);
     hMemDC = CreateCompatibleDC(hdc);
@@ -214,13 +219,10 @@ void InitGraphics(HWND hWnd) {
     ReleaseDC(hWnd, hdc);
 }
 
-// Изменение размера битмапа при изменении окна (простейший вариант – оставляем оригинал)
 void ResizeBitmap(HWND hWnd) {
-    // В данном примере не меняем размер битмапа – он фиксированный 800x600
-    // Можно было бы масштабировать при рисовании, оставим как есть.
+    // Не меняем размер битмапа
 }
 
-// Заливка холста цветом
 void ClearCanvas(COLORREF color) {
     RECT rect = {0, 0, WIDTH, HEIGHT};
     HBRUSH brush = CreateSolidBrush(color);
@@ -228,13 +230,11 @@ void ClearCanvas(COLORREF color) {
     DeleteObject(brush);
 }
 
-// Рисование пикселя (для пера)
 void DrawPixel(HDC hdc, int x, int y, COLORREF color) {
     if(x>=0 && x<WIDTH && y>=0 && y<HEIGHT)
         SetPixel(hdc, x, y, color);
 }
 
-// Рисование линии
 void DrawLine(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     HPEN pen = CreatePen(PS_SOLID, penSize, color);
     HPEN oldPen = (HPEN)SelectObject(hdc, pen);
@@ -244,7 +244,6 @@ void DrawLine(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     DeleteObject(pen);
 }
 
-// Рисование прямоугольника
 void DrawRectangle(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     HPEN pen = CreatePen(PS_SOLID, penSize, color);
     HBRUSH brush = (HBRUSH)GetStockObject(NULL_BRUSH);
@@ -256,7 +255,6 @@ void DrawRectangle(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     DeleteObject(pen);
 }
 
-// Рисование эллипса
 void DrawEllipse(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     HPEN pen = CreatePen(PS_SOLID, penSize, color);
     HBRUSH brush = (HBRUSH)GetStockObject(NULL_BRUSH);
@@ -268,7 +266,6 @@ void DrawEllipse(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
     DeleteObject(pen);
 }
 
-// Загрузка BMP из файла
 void LoadImageFile(HWND hWnd, const char* filename) {
     HBITMAP hNew = (HBITMAP)LoadImage(NULL, filename, IMAGE_BITMAP, 0, 0,
                                        LR_LOADFROMFILE | LR_CREATEDIBSECTION);
@@ -276,16 +273,12 @@ void LoadImageFile(HWND hWnd, const char* filename) {
         MessageBox(hWnd, "Не удалось загрузить BMP", "Ошибка", MB_ICONERROR);
         return;
     }
-    // Получаем размеры загруженного изображения
     BITMAP bm;
     GetObject(hNew, sizeof(bm), &bm);
-    // Копируем в рабочий битмап (масштабируем под WIDTH x HEIGHT)
     HDC hdc = GetDC(hWnd);
     HDC hdcTemp = CreateCompatibleDC(hdc);
     SelectObject(hdcTemp, hNew);
-    // Очищаем холст
     ClearCanvas(RGB(255,255,255));
-    // Копируем с масштабированием
     StretchBlt(hMemDC, 0, 0, WIDTH, HEIGHT, hdcTemp, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
     DeleteDC(hdcTemp);
     ReleaseDC(hWnd, hdc);
@@ -293,7 +286,6 @@ void LoadImageFile(HWND hWnd, const char* filename) {
     InvalidateRect(hWnd, NULL, TRUE);
 }
 
-// Сохранение BMP
 void SaveImageFile(HWND hWnd, const char* filename) {
     BITMAP bm;
     GetObject(hBitmap, sizeof(bm), &bm);
@@ -318,7 +310,6 @@ void SaveImageFile(HWND hWnd, const char* filename) {
     DWORD written;
     WriteFile(hFile, &bf, sizeof(bf), &written, NULL);
     WriteFile(hFile, &bi, sizeof(bi), &written, NULL);
-    // Получаем биты
     HDC hdc = GetDC(hWnd);
     HDC hMemDC2 = CreateCompatibleDC(hdc);
     HBITMAP hOldBmp = (HBITMAP)SelectObject(hMemDC2, hBitmap);
@@ -332,7 +323,6 @@ void SaveImageFile(HWND hWnd, const char* filename) {
     CloseHandle(hFile);
 }
 
-// Печать изображения
 void PrintImage(HWND hWnd) {
     PRINTDLG pd = {0};
     pd.lStructSize = sizeof(pd);
@@ -341,10 +331,8 @@ void PrintImage(HWND hWnd) {
     if(!PrintDlg(&pd)) return;
     HDC hdcPrn = pd.hDC;
     if(!hdcPrn) return;
-    // Получаем размеры страницы в пикселях (принтер)
     int pageWidth = GetDeviceCaps(hdcPrn, HORZRES);
     int pageHeight = GetDeviceCaps(hdcPrn, VERTRES);
-    // Масштабируем изображение на всю страницу с сохранением пропорций
     double scaleX = (double)pageWidth / WIDTH;
     double scaleY = (double)pageHeight / HEIGHT;
     double scale = min(scaleX, scaleY);
@@ -355,7 +343,6 @@ void PrintImage(HWND hWnd) {
     DOCINFO di = {sizeof(DOCINFO), "Рисунок", NULL};
     StartDoc(hdcPrn, &di);
     StartPage(hdcPrn);
-    // Копируем изображение из hMemDC на принтер
     StretchBlt(hdcPrn, xOff, yOff, drawWidth, drawHeight,
                hMemDC, 0, 0, WIDTH, HEIGHT, SRCCOPY);
     EndPage(hdcPrn);
@@ -363,12 +350,10 @@ void PrintImage(HWND hWnd) {
     DeleteDC(hdcPrn);
 }
 
-// Отрисовка временной фигуры поверх (резиновая нить)
 void RenderTemporaryShape(HDC hdc) {
     if(!shapeInProgress) return;
-    // Устанавливаем режим рисования XOR для временного отображения (чтобы стереть)
     SetROP2(hdc, R2_NOTXORPEN);
-    HPEN pen = CreatePen(PS_SOLID, penSize, RGB(255,255,255)); // белый для XOR
+    HPEN pen = CreatePen(PS_SOLID, penSize, RGB(255,255,255));
     HPEN oldPen = (HPEN)SelectObject(hdc, pen);
     switch(currentTool) {
         case TOOL_LINE:
@@ -390,11 +375,9 @@ void RenderTemporaryShape(HDC hdc) {
     SetROP2(hdc, R2_COPYPEN);
 }
 
-// Финализация фигуры: рисуем окончательно на битмапе
 void FinalizeShape() {
     switch(currentTool) {
         case TOOL_PEN:
-            // Для пера рисуем линию от start до end при движении мыши (за один шаг)
             DrawLine(hMemDC, startPt.x, startPt.y, endPt.x, endPt.y, currentColor);
             break;
         case TOOL_LINE:
@@ -409,9 +392,7 @@ void FinalizeShape() {
     }
 }
 
-// Точка входа
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // Регистрация класса окна
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
@@ -419,14 +400,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = "SimpleDraw";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     if(!RegisterClass(&wc)) return 0;
-    // Создание окна
     HWND hWnd = CreateWindow("SimpleDraw", "Рисовалка + Печать", WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT, WIDTH+16, HEIGHT+38,
                              NULL, NULL, hInstance, NULL);
     if(!hWnd) return 0;
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
-    // Цикл сообщений
     MSG msg;
     while(GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
