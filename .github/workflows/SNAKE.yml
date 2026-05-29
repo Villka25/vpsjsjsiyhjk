@@ -1,39 +1,25 @@
-name: Build 3D Game (C++ SFML OpenGL)
+name: Build EXE
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64
         run: |
-          sudo apt update
-          sudo apt install -y libsfml-dev
-
-      - name: Install Windows dependencies (vcpkg)
-        if: runner.os == 'Windows'
+          choco install mingw -y
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Compile
         run: |
-          vcpkg install sfml:x64-windows
-          vcpkg integrate install
-
-      - name: Configure CMake
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release ${{ runner.os == 'Windows' && '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows' || '' }}
-
-      - name: Build
-        run: cmake --build build --config Release
-
+          g++ -static -O2 main.cpp -lgdi32 -lcomdlg32 -o drawing_printer.exe
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: game-${{ runner.os }}
-          path: |
-            ${{ runner.os == 'Windows' && 'build/Release/3dgame.exe' || 'build/3dgame' }}
+          name: drawing_printer
+          path: drawing_printer.exe
