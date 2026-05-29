@@ -1,278 +1,436 @@
-#include <SFML/Window.hpp>
-#include <SFML/OpenGL.hpp>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <commdlg.h>
 #include <vector>
-#include <cmath>
-#include <cstdlib>
-#include <ctime>
-#include <string>
+#include <cstring>
 
-// ----------------------------------------------------------------------
-// Простые математические структуры
-// ----------------------------------------------------------------------
-struct Vec3 {
-    float x, y, z;
-    Vec3() : x(0), y(0), z(0) {}
-    Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
-    Vec3 operator+(const Vec3& o) const { return Vec3(x+o.x, y+o.y, z+o.z); }
-    Vec3 operator-(const Vec3& o) const { return Vec3(x-o.x, y-o.y, z-o.z); }
-    Vec3 operator*(float s) const { return Vec3(x*s, y*s, z*s); }
-    float length() const { return std::sqrt(x*x + y*y + z*z); }
-    Vec3 normalized() const {
-        float l = length();
-        return (l > 0.0001f) ? Vec3(x/l, y/l, z/l) : Vec3(0,0,0);
-    }
-};
+// Константы
+#define WIDTH  800
+#define HEIGHT 600
 
-float dot(const Vec3& a, const Vec3& b) {
-    return a.x*b.x + a.y*b.y + a.z*b.z;
-}
+// Инструменты
+enum Tool { TOOL_PEN, TOOL_LINE, TOOL_RECT, TOOL_ELLIPSE };
+Tool currentTool = TOOL_PEN;
 
-Vec3 cross(const Vec3& a, const Vec3& b) {
-    return Vec3(a.y*b.z - a.z*b.y,
-                a.z*b.x - a.x*b.z,
-                a.x*b.y - a.y*b.x);
-}
+// Цвет и размер кисти
+COLORREF currentColor = RGB(0, 0, 0);
+int penSize = 2;
 
-// ----------------------------------------------------------------------
-// Камера от первого лица
-// ----------------------------------------------------------------------
-struct Camera {
-    Vec3 pos;
-    float yaw, pitch;   // углы Эйлера (радианы)
-    Vec3 forward, right, up;
+// Рисование мышью
+bool isDrawing = false;
+POINT startPt, endPt;
 
-    Camera() : pos(0, 2, 5), yaw(-1.57f), pitch(0) {
-        updateVectors();
-    }
+// Растровое изображение (двойная буферизация)
+HBITMAP hBitmap = NULL;
+HBITMAP hOldBitmap = NULL;
+HDC hMemDC = NULL;
 
-    void updateVectors() {
-        forward = Vec3(std::cos(pitch) * std::cos(yaw),
-                       std::sin(pitch),
-                       std::cos(pitch) * std::sin(yaw)).normalized();
-        right = cross(forward, Vec3(0,1,0)).normalized();
-        up = cross(right, forward).normalized();
-    }
+// Обработка временной фигуры
+bool shapeInProgress = false;
+POINT shapeStart, shapeEnd;
 
-    void rotate(float dyaw, float dpitch) {
-        yaw += dyaw;
-        pitch += dpitch;
-        const float limit = 1.5f; // ограничение угла взгляда
-        if (pitch > limit) pitch = limit;
-        if (pitch < -limit) pitch = -limit;
-        updateVectors();
-    }
+// Функции
+void InitGraphics(HWND hWnd);
+void ResizeBitmap(HWND hWnd);
+void ClearCanvas(COLORREF color);
+void DrawPixel(HDC hdc, int x, int y, COLORREF color);
+void DrawLine(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color);
+void DrawRectangle(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color);
+void DrawEllipse(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color);
+void LoadImageFile(HWND hWnd, const char* filename);
+void SaveImageFile(HWND hWnd, const char* filename);
+void PrintImage(HWND hWnd);
+void RenderTemporaryShape(HDC hdc);
+void FinalizeShape();
 
-    void move(float forwardAmount, float rightAmount) {
-        pos = pos + forward * forwardAmount + right * rightAmount;
-    }
-};
+// Оконная процедура
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch(msg) {
+        case WM_CREATE: {
+            InitGraphics(hWnd);
+            ClearCanvas(RGB(255,255,255)); // белый фон
+            // Создание меню
+            HMENU hMenu = CreateMenu();
+            HMENU hFileMenu = CreatePopupMenu();
+            AppendMenu(hFileMenu, MF_STRING, 1001, "Открыть BMP...");
+            AppendMenu(hFileMenu, MF_STRING, 1002, "Сохранить BMP...");
+            AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
+            AppendMenu(hFileMenu, MF_STRING, 1003, "Печать...");
+            AppendMenu(hFileMenu, MF_SEPARATOR, 0, NULL);
+            AppendMenu(hFileMenu, MF_STRING, 1004, "Выход");
+            AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, "Файл");
 
-// ----------------------------------------------------------------------
-// Структура врага
-// ----------------------------------------------------------------------
-struct Enemy {
-    Vec3 pos;
-    float speed;
-    bool alive;
-    Enemy(const Vec3& p) : pos(p), speed(0.02f), alive(true) {}
-};
+            HMENU hToolMenu = CreatePopupMenu();
+            AppendMenu(hToolMenu, MF_STRING, 2001, "Перо");
+            AppendMenu(hToolMenu, MF_STRING, 2002, "Линия");
+            AppendMenu(hToolMenu, MF_STRING, 2003, "Прямоугольник");
+            AppendMenu(hToolMenu, MF_STRING, 2004, "Эллипс");
+            AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hToolMenu, "Инструмент");
 
-// ----------------------------------------------------------------------
-// Вспомогательные функции OpenGL
-// ----------------------------------------------------------------------
-void drawCube(const Vec3& pos, float size, float r, float g, float b) {
-    glPushMatrix();
-    glTranslatef(pos.x, pos.y, pos.z);
-    glColor3f(r, g, b);
-    glBegin(GL_QUADS);
-    // Передняя грань
-    glVertex3f(-size, -size,  size);
-    glVertex3f( size, -size,  size);
-    glVertex3f( size,  size,  size);
-    glVertex3f(-size,  size,  size);
-    // Задняя грань
-    glVertex3f(-size, -size, -size);
-    glVertex3f(-size,  size, -size);
-    glVertex3f( size,  size, -size);
-    glVertex3f( size, -size, -size);
-    // Верхняя грань
-    glVertex3f(-size,  size, -size);
-    glVertex3f(-size,  size,  size);
-    glVertex3f( size,  size,  size);
-    glVertex3f( size,  size, -size);
-    // Нижняя грань
-    glVertex3f(-size, -size, -size);
-    glVertex3f( size, -size, -size);
-    glVertex3f( size, -size,  size);
-    glVertex3f(-size, -size,  size);
-    // Правая грань
-    glVertex3f( size, -size, -size);
-    glVertex3f( size,  size, -size);
-    glVertex3f( size,  size,  size);
-    glVertex3f( size, -size,  size);
-    // Левая грань
-    glVertex3f(-size, -size, -size);
-    glVertex3f(-size, -size,  size);
-    glVertex3f(-size,  size,  size);
-    glVertex3f(-size,  size, -size);
-    glEnd();
-    glPopMatrix();
-}
+            HMENU hColorMenu = CreatePopupMenu();
+            AppendMenu(hColorMenu, MF_STRING, 3001, "Чёрный");
+            AppendMenu(hColorMenu, MF_STRING, 3002, "Красный");
+            AppendMenu(hColorMenu, MF_STRING, 3003, "Зелёный");
+            AppendMenu(hColorMenu, MF_STRING, 3004, "Синий");
+            AppendMenu(hColorMenu, MF_STRING, 3005, "Другой...");
+            AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hColorMenu, "Цвет");
 
-void drawGround(float size) {
-    glColor3f(0.3f, 0.5f, 0.3f);
-    glBegin(GL_QUADS);
-    glVertex3f(-size, 0, -size);
-    glVertex3f( size, 0, -size);
-    glVertex3f( size, 0,  size);
-    glVertex3f(-size, 0,  size);
-    glEnd();
-}
-
-// ----------------------------------------------------------------------
-// Главный цикл
-// ----------------------------------------------------------------------
-int main() {
-    // Инициализация окна
-    sf::Window window(sf::VideoMode(1024, 768), "3D Shooter (Cube Invaders)", sf::Style::Default, sf::ContextSettings(24, 8, 4, 3, 3));
-    window.setVerticalSyncEnabled(true);
-    window.setMouseCursorVisible(false);
-    window.setMouseCursorGrabbed(true);
-
-    // Инициализация OpenGL
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
-    glViewport(0, 0, 1024, 768);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    gluPerspective(45.0, 1024.0/768.0, 0.1, 200.0);
-    glMatrixMode(GL_MODELVIEW);
-
-    // Генератор случайных чисел
-    std::srand(std::time(nullptr));
-
-    // Камера
-    Camera cam;
-
-    // Враги (10 штук)
-    std::vector<Enemy> enemies;
-    for (int i = 0; i < 10; ++i) {
-        float x = (std::rand() % 40) - 20.0f;
-        float z = (std::rand() % 40) - 20.0f;
-        enemies.emplace_back(Vec3(x, 1.5f, z));
-    }
-
-    int score = 0;
-    sf::Clock clock;
-
-    // Главный цикл
-    while (window.isOpen()) {
-        // Время кадра
-        float dt = clock.restart().asSeconds();
-
-        // Обработка событий
-        sf::Event event;
-        while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
-                window.close();
-            if (event.type == sf::Event::KeyPressed) {
-                if (event.key.code == sf::Keyboard::Escape)
-                    window.close();
-            }
+            SetMenu(hWnd, hMenu);
+            break;
         }
-
-        // Управление камерой (мышь и клавиши)
-        sf::Vector2i mouseDelta = sf::Mouse::getPosition(window) - sf::Vector2i(512, 384);
-        sf::Mouse::setPosition(sf::Vector2i(512, 384), window);
-        cam.rotate(mouseDelta.x * 0.002f, -mouseDelta.y * 0.002f);
-
-        float speed = 5.0f * dt;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) cam.move(speed, 0);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) cam.move(-speed, 0);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) cam.move(0, -speed);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) cam.move(0, speed);
-
-        // Стрельба (по пробелу)
-        static bool spacePressed = false;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space)) {
-            if (!spacePressed) {
-                spacePressed = true;
-                // Проверяем попадание во врагов (рейкаст вперёд)
-                Vec3 rayDir = cam.forward;
-                Vec3 rayOrigin = cam.pos;
-                float closest = 1000.0f;
-                int hitIndex = -1;
-                for (int i = 0; i < enemies.size(); ++i) {
-                    if (!enemies[i].alive) continue;
-                    Vec3 toEnemy = enemies[i].pos - rayOrigin;
-                    float t = dot(toEnemy, rayDir);
-                    if (t < 0) continue;
-                    Vec3 closestPoint = rayOrigin + rayDir * t;
-                    float dist = (enemies[i].pos - closestPoint).length();
-                    if (dist < 1.5f && t < closest) {
-                        closest = t;
-                        hitIndex = i;
+        case WM_SIZE: {
+            ResizeBitmap(hWnd);
+            InvalidateRect(hWnd, NULL, TRUE);
+            break;
+        }
+        case WM_LBUTTONDOWN: {
+            isDrawing = true;
+            startPt.x = LOWORD(lParam);
+            startPt.y = HIWORD(lParam);
+            shapeStart = startPt;
+            shapeEnd = startPt;
+            shapeInProgress = true;
+            SetCapture(hWnd);
+            break;
+        }
+        case WM_MOUSEMOVE: {
+            if(isDrawing) {
+                endPt.x = LOWORD(lParam);
+                endPt.y = HIWORD(lParam);
+                shapeEnd = endPt;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            break;
+        }
+        case WM_LBUTTONUP: {
+            if(isDrawing) {
+                isDrawing = false;
+                shapeEnd = endPt;
+                FinalizeShape();          // рисуем окончательную фигуру на битмапе
+                shapeInProgress = false;
+                ReleaseCapture();
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            break;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
+            // Копируем из памяти в окно
+            if(hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                SelectObject(hdcMem, hBitmap);
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(bm), &bm);
+                StretchBlt(hdc, 0, 0, WIDTH, HEIGHT,
+                           hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                DeleteDC(hdcMem);
+            }
+            // Поверх рисуем временную фигуру (резиновая нить)
+            if(shapeInProgress) {
+                RenderTemporaryShape(hdc);
+            }
+            EndPaint(hWnd, &ps);
+            break;
+        }
+        case WM_COMMAND: {
+            switch(LOWORD(wParam)) {
+                case 1001: { // Открыть BMP
+                    OPENFILENAME ofn = {0};
+                    char file[MAX_PATH] = "";
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hWnd;
+                    ofn.lpstrFilter = "BMP Files\0*.BMP\0";
+                    ofn.lpstrFile = file;
+                    ofn.nMaxFile = MAX_PATH;
+                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+                    if(GetOpenFileName(&ofn)) {
+                        LoadImageFile(hWnd, file);
                     }
+                    break;
                 }
-                if (hitIndex >= 0) {
-                    enemies[hitIndex].alive = false;
-                    ++score;
+                case 1002: { // Сохранить BMP
+                    OPENFILENAME ofn = {0};
+                    char file[MAX_PATH] = "";
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hWnd;
+                    ofn.lpstrFilter = "BMP Files\0*.BMP\0";
+                    ofn.lpstrFile = file;
+                    ofn.nMaxFile = MAX_PATH;
+                    ofn.Flags = OFN_OVERWRITEPROMPT;
+                    if(GetSaveFileName(&ofn)) {
+                        SaveImageFile(hWnd, file);
+                    }
+                    break;
+                }
+                case 1003: // Печать
+                    PrintImage(hWnd);
+                    break;
+                case 1004: // Выход
+                    PostQuitMessage(0);
+                    break;
+                case 2001: currentTool = TOOL_PEN; break;
+                case 2002: currentTool = TOOL_LINE; break;
+                case 2003: currentTool = TOOL_RECT; break;
+                case 2004: currentTool = TOOL_ELLIPSE; break;
+                case 3001: currentColor = RGB(0,0,0); break;
+                case 3002: currentColor = RGB(255,0,0); break;
+                case 3003: currentColor = RGB(0,255,0); break;
+                case 3004: currentColor = RGB(0,0,255); break;
+                case 3005: {
+                    CHOOSECOLOR cc = {0};
+                    COLORREF custom[16] = {0};
+                    cc.lStructSize = sizeof(cc);
+                    cc.hwndOwner = hWnd;
+                    cc.rgbResult = currentColor;
+                    cc.lpCustColors = custom;
+                    cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+                    if(ChooseColor(&cc)) {
+                        currentColor = cc.rgbResult;
+                    }
+                    break;
                 }
             }
-        } else {
-            spacePressed = false;
+            break;
         }
-
-        // Обновление врагов (движутся к игроку)
-        for (auto& e : enemies) {
-            if (!e.alive) continue;
-            Vec3 dir = (cam.pos - e.pos).normalized();
-            e.pos = e.pos + dir * e.speed;
+        case WM_DESTROY: {
+            if(hMemDC) DeleteDC(hMemDC);
+            if(hBitmap) DeleteObject(hBitmap);
+            PostQuitMessage(0);
+            break;
         }
-
-        // Рендеринг
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glLoadIdentity();
-        // Применяем камеру
-        gluLookAt(cam.pos.x, cam.pos.y, cam.pos.z,
-                  cam.pos.x + cam.forward.x, cam.pos.y + cam.forward.y, cam.pos.z + cam.forward.z,
-                  0.0, 1.0, 0.0);
-
-        drawGround(50.0f);
-
-        // Враги
-        for (const auto& e : enemies) {
-            if (e.alive)
-                drawCube(e.pos, 1.0f, 1.0f, 0.0f, 0.0f);
-        }
-
-        // Прицел (крестик в центре)
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix();
-        glLoadIdentity();
-        glOrtho(-1, 1, -1, 1, -1, 1);
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix();
-        glLoadIdentity();
-        glDisable(GL_DEPTH_TEST);
-        glColor3f(1,1,1);
-        glBegin(GL_LINES);
-        glVertex2f(-0.02f, 0);
-        glVertex2f( 0.02f, 0);
-        glVertex2f(0, -0.02f);
-        glVertex2f(0,  0.02f);
-        glEnd();
-        glEnable(GL_DEPTH_TEST);
-        glPopMatrix();
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
-
-        window.display();
-
-        // Обновление заголовка с очками
-        window.setTitle("3D Shooter | Score: " + std::to_string(score));
+        default:
+            return DefWindowProc(hWnd, msg, wParam, lParam);
     }
-
     return 0;
+}
+
+// Инициализация графики: создаём HDC памяти и битмап
+void InitGraphics(HWND hWnd) {
+    HDC hdc = GetDC(hWnd);
+    hMemDC = CreateCompatibleDC(hdc);
+    hBitmap = CreateCompatibleBitmap(hdc, WIDTH, HEIGHT);
+    hOldBitmap = (HBITMAP)SelectObject(hMemDC, hBitmap);
+    ReleaseDC(hWnd, hdc);
+}
+
+// Изменение размера битмапа при изменении окна (простейший вариант – оставляем оригинал)
+void ResizeBitmap(HWND hWnd) {
+    // В данном примере не меняем размер битмапа – он фиксированный 800x600
+    // Можно было бы масштабировать при рисовании, оставим как есть.
+}
+
+// Заливка холста цветом
+void ClearCanvas(COLORREF color) {
+    RECT rect = {0, 0, WIDTH, HEIGHT};
+    HBRUSH brush = CreateSolidBrush(color);
+    FillRect(hMemDC, &rect, brush);
+    DeleteObject(brush);
+}
+
+// Рисование пикселя (для пера)
+void DrawPixel(HDC hdc, int x, int y, COLORREF color) {
+    if(x>=0 && x<WIDTH && y>=0 && y<HEIGHT)
+        SetPixel(hdc, x, y, color);
+}
+
+// Рисование линии
+void DrawLine(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, penSize, color);
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+    MoveToEx(hdc, x1, y1, NULL);
+    LineTo(hdc, x2, y2);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+// Рисование прямоугольника
+void DrawRectangle(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, penSize, color);
+    HBRUSH brush = (HBRUSH)GetStockObject(NULL_BRUSH);
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, brush);
+    Rectangle(hdc, min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2));
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+}
+
+// Рисование эллипса
+void DrawEllipse(HDC hdc, int x1, int y1, int x2, int y2, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, penSize, color);
+    HBRUSH brush = (HBRUSH)GetStockObject(NULL_BRUSH);
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, brush);
+    Ellipse(hdc, min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2));
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+}
+
+// Загрузка BMP из файла
+void LoadImageFile(HWND hWnd, const char* filename) {
+    HBITMAP hNew = (HBITMAP)LoadImage(NULL, filename, IMAGE_BITMAP, 0, 0,
+                                       LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+    if(!hNew) {
+        MessageBox(hWnd, "Не удалось загрузить BMP", "Ошибка", MB_ICONERROR);
+        return;
+    }
+    // Получаем размеры загруженного изображения
+    BITMAP bm;
+    GetObject(hNew, sizeof(bm), &bm);
+    // Копируем в рабочий битмап (масштабируем под WIDTH x HEIGHT)
+    HDC hdc = GetDC(hWnd);
+    HDC hdcTemp = CreateCompatibleDC(hdc);
+    SelectObject(hdcTemp, hNew);
+    // Очищаем холст
+    ClearCanvas(RGB(255,255,255));
+    // Копируем с масштабированием
+    StretchBlt(hMemDC, 0, 0, WIDTH, HEIGHT, hdcTemp, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+    DeleteDC(hdcTemp);
+    ReleaseDC(hWnd, hdc);
+    DeleteObject(hNew);
+    InvalidateRect(hWnd, NULL, TRUE);
+}
+
+// Сохранение BMP
+void SaveImageFile(HWND hWnd, const char* filename) {
+    BITMAP bm;
+    GetObject(hBitmap, sizeof(bm), &bm);
+    BITMAPFILEHEADER bf = {0};
+    BITMAPINFOHEADER bi = {0};
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = bm.bmWidth;
+    bi.biHeight = bm.bmHeight;
+    bi.biPlanes = 1;
+    bi.biBitCount = bm.bmBitsPixel;
+    bi.biCompression = BI_RGB;
+    bi.biSizeImage = ((bm.bmWidth * bm.bmBitsPixel + 31) / 32) * 4 * bm.bmHeight;
+    DWORD dwTotal = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + bi.biSizeImage;
+    bf.bfType = 0x4D42;
+    bf.bfSize = dwTotal;
+    bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    HANDLE hFile = CreateFile(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if(hFile == INVALID_HANDLE_VALUE) {
+        MessageBox(hWnd, "Не удалось создать файл", "Ошибка", MB_ICONERROR);
+        return;
+    }
+    DWORD written;
+    WriteFile(hFile, &bf, sizeof(bf), &written, NULL);
+    WriteFile(hFile, &bi, sizeof(bi), &written, NULL);
+    // Получаем биты
+    HDC hdc = GetDC(hWnd);
+    HDC hMemDC2 = CreateCompatibleDC(hdc);
+    HBITMAP hOldBmp = (HBITMAP)SelectObject(hMemDC2, hBitmap);
+    BYTE* bits = new BYTE[bi.biSizeImage];
+    GetDIBits(hMemDC2, hBitmap, 0, bm.bmHeight, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    WriteFile(hFile, bits, bi.biSizeImage, &written, NULL);
+    delete[] bits;
+    SelectObject(hMemDC2, hOldBmp);
+    DeleteDC(hMemDC2);
+    ReleaseDC(hWnd, hdc);
+    CloseHandle(hFile);
+}
+
+// Печать изображения
+void PrintImage(HWND hWnd) {
+    PRINTDLG pd = {0};
+    pd.lStructSize = sizeof(pd);
+    pd.hwndOwner = hWnd;
+    pd.Flags = PD_RETURNDC;
+    if(!PrintDlg(&pd)) return;
+    HDC hdcPrn = pd.hDC;
+    if(!hdcPrn) return;
+    // Получаем размеры страницы в пикселях (принтер)
+    int pageWidth = GetDeviceCaps(hdcPrn, HORZRES);
+    int pageHeight = GetDeviceCaps(hdcPrn, VERTRES);
+    // Масштабируем изображение на всю страницу с сохранением пропорций
+    double scaleX = (double)pageWidth / WIDTH;
+    double scaleY = (double)pageHeight / HEIGHT;
+    double scale = min(scaleX, scaleY);
+    int drawWidth = (int)(WIDTH * scale);
+    int drawHeight = (int)(HEIGHT * scale);
+    int xOff = (pageWidth - drawWidth) / 2;
+    int yOff = (pageHeight - drawHeight) / 2;
+    DOCINFO di = {sizeof(DOCINFO), "Рисунок", NULL};
+    StartDoc(hdcPrn, &di);
+    StartPage(hdcPrn);
+    // Копируем изображение из hMemDC на принтер
+    StretchBlt(hdcPrn, xOff, yOff, drawWidth, drawHeight,
+               hMemDC, 0, 0, WIDTH, HEIGHT, SRCCOPY);
+    EndPage(hdcPrn);
+    EndDoc(hdcPrn);
+    DeleteDC(hdcPrn);
+}
+
+// Отрисовка временной фигуры поверх (резиновая нить)
+void RenderTemporaryShape(HDC hdc) {
+    if(!shapeInProgress) return;
+    // Устанавливаем режим рисования XOR для временного отображения (чтобы стереть)
+    SetROP2(hdc, R2_NOTXORPEN);
+    HPEN pen = CreatePen(PS_SOLID, penSize, RGB(255,255,255)); // белый для XOR
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+    switch(currentTool) {
+        case TOOL_LINE:
+            MoveToEx(hdc, shapeStart.x, shapeStart.y, NULL);
+            LineTo(hdc, shapeEnd.x, shapeEnd.y);
+            break;
+        case TOOL_RECT:
+            Rectangle(hdc, min(shapeStart.x, shapeEnd.x), min(shapeStart.y, shapeEnd.y),
+                           max(shapeStart.x, shapeEnd.x), max(shapeStart.y, shapeEnd.y));
+            break;
+        case TOOL_ELLIPSE:
+            Ellipse(hdc, min(shapeStart.x, shapeEnd.x), min(shapeStart.y, shapeEnd.y),
+                         max(shapeStart.x, shapeEnd.x), max(shapeStart.y, shapeEnd.y));
+            break;
+        default: break;
+    }
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+    SetROP2(hdc, R2_COPYPEN);
+}
+
+// Финализация фигуры: рисуем окончательно на битмапе
+void FinalizeShape() {
+    switch(currentTool) {
+        case TOOL_PEN:
+            // Для пера рисуем линию от start до end при движении мыши (за один шаг)
+            DrawLine(hMemDC, startPt.x, startPt.y, endPt.x, endPt.y, currentColor);
+            break;
+        case TOOL_LINE:
+            DrawLine(hMemDC, shapeStart.x, shapeStart.y, shapeEnd.x, shapeEnd.y, currentColor);
+            break;
+        case TOOL_RECT:
+            DrawRectangle(hMemDC, shapeStart.x, shapeStart.y, shapeEnd.x, shapeEnd.y, currentColor);
+            break;
+        case TOOL_ELLIPSE:
+            DrawEllipse(hMemDC, shapeStart.x, shapeStart.y, shapeEnd.x, shapeEnd.y, currentColor);
+            break;
+    }
+}
+
+// Точка входа
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Регистрация класса окна
+    WNDCLASS wc = {0};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+    wc.lpszClassName = "SimpleDraw";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    if(!RegisterClass(&wc)) return 0;
+    // Создание окна
+    HWND hWnd = CreateWindow("SimpleDraw", "Рисовалка + Печать", WS_OVERLAPPEDWINDOW,
+                             CW_USEDEFAULT, CW_USEDEFAULT, WIDTH+16, HEIGHT+38,
+                             NULL, NULL, hInstance, NULL);
+    if(!hWnd) return 0;
+    ShowWindow(hWnd, nCmdShow);
+    UpdateWindow(hWnd);
+    // Цикл сообщений
+    MSG msg;
+    while(GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    return msg.wParam;
 }
