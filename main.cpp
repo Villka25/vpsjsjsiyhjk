@@ -3,6 +3,15 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <cstring>
+#include <cstdio>   // для sprintf
+
+// Определяем min/max на случай, если их нет
+#ifndef min
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif
 
 // Константы
 #define WIDTH         800
@@ -51,7 +60,7 @@ void SetPenSize(int size);
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_CREATE: {
-            // Инициализация общих элементов (для trackbar)
+            // Инициализация общих элементов (для статус-бара)
             INITCOMMONCONTROLSEX icex;
             icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
             icex.dwICC = ICC_BAR_CLASSES;
@@ -111,12 +120,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             hColorYellow= CreateWindow("BUTTON", "", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 390,2, 30,30, hWnd, (HMENU)3005, NULL, NULL);
 
             // Заливка цветом кнопок
-            HBRUSH br;
-            br = CreateSolidBrush(RGB(0,0,0)); SetClassLongPtr(hColorBlack, GCLP_HBRBACKGROUND, (LONG_PTR)br); InvalidateRect(hColorBlack, NULL, TRUE);
-            br = CreateSolidBrush(RGB(255,0,0)); SetClassLongPtr(hColorRed,   GCLP_HBRBACKGROUND, (LONG_PTR)br); InvalidateRect(hColorRed, NULL, TRUE);
-            br = CreateSolidBrush(RGB(0,255,0)); SetClassLongPtr(hColorGreen, GCLP_HBRBACKGROUND, (LONG_PTR)br); InvalidateRect(hColorGreen, NULL, TRUE);
-            br = CreateSolidBrush(RGB(0,0,255)); SetClassLongPtr(hColorBlue,  GCLP_HBRBACKGROUND, (LONG_PTR)br); InvalidateRect(hColorBlue, NULL, TRUE);
-            br = CreateSolidBrush(RGB(255,255,0)); SetClassLongPtr(hColorYellow, GCLP_HBRBACKGROUND, (LONG_PTR)br); InvalidateRect(hColorYellow, NULL, TRUE);
+            SetClassLongPtr(hColorBlack, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(0,0,0)));
+            SetClassLongPtr(hColorRed,   GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(255,0,0)));
+            SetClassLongPtr(hColorGreen, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(0,255,0)));
+            SetClassLongPtr(hColorBlue,  GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(0,0,255)));
+            SetClassLongPtr(hColorYellow,GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(255,255,0)));
+            InvalidateRect(hColorBlack, NULL, TRUE);
+            InvalidateRect(hColorRed, NULL, TRUE);
+            InvalidateRect(hColorGreen, NULL, TRUE);
+            InvalidateRect(hColorBlue, NULL, TRUE);
+            InvalidateRect(hColorYellow, NULL, TRUE);
 
             // Размер кисти
             CreateWindow("STATIC", "Size:", WS_CHILD | WS_VISIBLE, 440, 8, 30, 20, hWnd, NULL, NULL, NULL);
@@ -133,9 +146,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         }
         case WM_SIZE: {
-            // Изменяем размер статус-бара
             SendMessage(hStatusBar, WM_SIZE, 0, 0);
-            // Перерисовываем холст
             InvalidateRect(hWnd, NULL, TRUE);
             break;
         }
@@ -175,7 +186,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
-            // Копируем растровое изображение в окно, учитывая панель инструментов и статус-бар
             RECT rect;
             GetClientRect(hWnd, &rect);
             int toolbarHeight = TOOLBAR_HEIGHT;
@@ -190,7 +200,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             StretchBlt(hdc, 0, toolbarHeight, WIDTH, HEIGHT,
                        hdcMem, 0, 0, WIDTH, HEIGHT, SRCCOPY);
             DeleteDC(hdcMem);
-            // Временная фигура (резиновая нить)
             if(shapeInProgress) {
                 RenderTemporaryShape(hdc);
             }
@@ -267,7 +276,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
-// ----- Реализация графических функций -----
 void InitGraphics(HWND hWnd) {
     HDC hdc = GetDC(hWnd);
     hMemDC = CreateCompatibleDC(hdc);
