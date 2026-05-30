@@ -1,9 +1,7 @@
 name: Build EXE
 
 on:
-  # Запуск по кнопке "Run workflow" на вкладке Actions
   workflow_dispatch:
-  # Также можно оставить автоматический запуск при пуше в main (опционально)
   push:
     branches: [ main ]
 
@@ -12,18 +10,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install MinGW-w64
         run: |
           choco install mingw -y
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Compile
         run: |
-          g++ -static -O2 main.cpp -lgdi32 -lcomdlg32 -o drawing_printer.exe
-
+          g++ -static -O2 main.cpp -lgdi32 -lcomctl32 -lcomdlg32 -o simple_paint.exe
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: drawing_printer
-          path: drawing_printer.exe
+          name: simple_paint
+          path: simple_paint.exe
