@@ -1,0 +1,29 @@
+name: Build SA-MP Launcher
+
+on:
+  workflow_dispatch:      # Ручной запуск (кнопка Run workflow)
+  push:
+    branches: [ main ]    # Автоматическая сборка при пуше в main
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install MinGW-w64
+        run: |
+          choco install mingw -y
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Compile launcher
+        run: |
+          g++ -static -O2 samp_launcher.cpp -o samp_launcher.exe -lws2_32 -lgdi32 -luser32
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: samp-launcher
+          path: samp_launcher.exe
