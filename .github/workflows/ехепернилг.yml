@@ -1,0 +1,17 @@
+name: Build Terrain Generator
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW
+        run: choco install mingw -y
+      - name: Compile
+        run: |
+          g++ -static -O2 -mwindows terrain_generator.cpp -lgdi32 -lcomctl32 -o terrain_gen.exe
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: terrain-generator
+          path: terrain_gen.exe
