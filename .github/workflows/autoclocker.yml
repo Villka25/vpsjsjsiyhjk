@@ -1,26 +1,25 @@
-name: Build AutoClicker
+name: Build FpsChecker
 
-on:
-  workflow_dispatch:  # ручной запуск через кнопку Run workflow
+on: workflow_dispatch
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup MSVC compiler
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Compile
-        shell: cmd
+      - uses: actions/checkout@v4
+      - name: Install vcpkg and deps
         run: |
-          cl main.cpp /O2 /MT /FeAutoClicker.exe user32.lib comctl32.lib gdi32.lib shell32.lib
-
+          git clone https://github.com/Microsoft/vcpkg.git
+          cd vcpkg
+          .\bootstrap-vcpkg.bat
+          .\vcpkg install glfw3 glad
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
+      - name: Build
+        run: cmake --build build --config Release
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AutoClicker.exe
-          path: AutoClicker.exe
+          name: FpsChecker.exe
+          path: build/Release/FpsChecker.exe
