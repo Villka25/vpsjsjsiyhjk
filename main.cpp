@@ -1,497 +1,321 @@
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <commctrl.h>
-#include <cstdio>
-#include <vector>
-#include <string>
-#include <random>
+// FPS Counter with OpenGL 3D scene and overlay
+// Compile with: g++ main.cpp -o FpsChecker.exe -lglfw3 -lopengl32 -lgdi32 -lglu32
+
+#include <iostream>
 #include <chrono>
-#include <thread>
-#include <fstream>
+#include <vector>
+#include <cmath>
+#include <cstdio>
 
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+// GLFW3
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 
-// -------------------------------------------------------------
-// Structures
-// -------------------------------------------------------------
-struct ClickPoint {
-    int x = 0, y = 0;
-    std::string label;
-    bool enabled = true;
-    int clickType = 0;   // 0=left, 1=right, 2=middle
+// glad (OpenGL loader)
+#include <glad/glad.h>
+
+// Math helpers
+struct Vec3 { float x, y, z; };
+struct Vec4 { float x, y, z, w; };
+
+// Simple camera
+struct Camera {
+    Vec3 pos = {0.0f, 2.0f, 5.0f};
+    Vec3 target = {0.0f, 0.0f, 0.0f};
+    Vec3 up = {0.0f, 1.0f, 0.0f};
+    float fov = 60.0f;
 };
 
-struct Settings {
-    std::vector<ClickPoint> points;
-    int cps = 10;
-    bool randomDelay = false;
-    int randomPercent = 20;
-    bool loopMode = true;
+// Global variables
+GLFWwindow* g_window = nullptr;
+int g_width = 1280;
+int g_height = 720;
+double g_lastTime = 0.0;
+int g_frameCount = 0;
+float g_currentFPS = 0.0f;
+bool g_showOverlay = true;
+
+// Shader sources
+const char* vertexShaderSrc = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aColor;
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+out vec3 fragColor;
+void main() {
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
+    fragColor = aColor;
+}
+)";
+
+const char* fragmentShaderSrc = R"(
+#version 330 core
+in vec3 fragColor;
+out vec4 color;
+void main() {
+    color = vec4(fragColor, 1.0);
+}
+)";
+
+// Simple cube vertices (position, color)
+float vertices[] = {
+    // positions          // colors
+    -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
+     0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 0.0f,
+     0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
+    -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f,
+    -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
+     0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 1.0f,
+     0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,
+    -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f
 };
 
-// -------------------------------------------------------------
-// Global Variables
-// -------------------------------------------------------------
-Settings g_settings;
-HWND g_hDlg = nullptr;
-HWND g_hList = nullptr;
-HWND g_hCpsCombo = nullptr;
-HWND g_hRandomCheck = nullptr;
-HWND g_hRandomSpin = nullptr;
-HWND g_hLoopCheck = nullptr;
-HWND g_hStartBtn = nullptr;
-HWND g_hStopBtn = nullptr;
-HWND g_hAddBtn = nullptr;
-HWND g_hRemoveBtn = nullptr;
-HWND g_hPickBtn = nullptr;
-HWND g_hStatusStatic = nullptr;
-HWND g_hCountStatic = nullptr;
-HWND g_hProgress = nullptr;
+unsigned int indices[] = {
+    0,1,2, 0,2,3, // back
+    4,7,6, 4,6,5, // front
+    0,4,5, 0,5,1, // bottom
+    2,6,7, 2,7,3, // top
+    0,3,7, 0,7,4, // left
+    1,5,6, 1,6,2  // right
+};
 
-HANDLE g_hWorker = nullptr;
-volatile bool g_running = false;
-volatile bool g_pause = false;
-int g_totalClicks = 0;
-bool g_isPicking = false;
-const UINT HOTKEY_ID = 1;
+unsigned int VAO, VBO, EBO;
+unsigned int shaderProgram;
+Camera camera;
 
-// -------------------------------------------------------------
-// Forward declarations
-// -------------------------------------------------------------
-LRESULT CALLBACK DlgProc(HWND, UINT, WPARAM, LPARAM);
-void AddPointToList(int index);
-void RefreshList();
-void SaveSettings();
-void LoadSettings();
-void ApplySettingsToUI();
-void UpdateStatus(const char* text, bool error = false);
-void DoClick(const ClickPoint& pt);
-DWORD WINAPI WorkerThread(LPVOID);
-void StartClicker();
-void StopClicker();
-void AddPoint(int x, int y, const char* label, int clickType);
-void RemoveSelectedPoint();
-void PickPosition();
+// Timing for rotation
+float angle = 0.0f;
 
-// -------------------------------------------------------------
-// Helper: simulate click
-// -------------------------------------------------------------
-void DoClick(const ClickPoint& pt) {
-    SetCursorPos(pt.x, pt.y);
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+// Initialize GLFW and OpenGL
+bool initGLFW() {
+    if (!glfwInit()) {
+        std::cerr << "Failed to init GLFW" << std::endl;
+        return false;
+    }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    g_window = glfwCreateWindow(g_width, g_height, "FPS Checker - OpenGL Scene", nullptr, nullptr);
+    if (!g_window) {
+        std::cerr << "Failed to create window" << std::endl;
+        glfwTerminate();
+        return false;
+    }
+    glfwMakeContextCurrent(g_window);
+    glfwSwapInterval(1); // VSync on (1) or off (0)
 
-    DWORD down = 0, up = 0;
-    if (pt.clickType == 0)      { down = MOUSEEVENTF_LEFTDOWN;   up = MOUSEEVENTF_LEFTUP; }
-    else if (pt.clickType == 1) { down = MOUSEEVENTF_RIGHTDOWN;  up = MOUSEEVENTF_RIGHTUP; }
-    else                        { down = MOUSEEVENTF_MIDDLEDOWN; up = MOUSEEVENTF_MIDDLEUP; }
-
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_MOUSE; inputs[0].mi.dwFlags = down;
-    inputs[1].type = INPUT_MOUSE; inputs[1].mi.dwFlags = up;
-    SendInput(2, inputs, sizeof(INPUT));
+    // Load OpenGL functions with glad
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        std::cerr << "Failed to load GLAD" << std::endl;
+        return false;
+    }
+    glViewport(0, 0, g_width, g_height);
+    glEnable(GL_DEPTH_TEST);
+    return true;
 }
 
-// -------------------------------------------------------------
-// Worker Thread (actual clicking)
-// -------------------------------------------------------------
-DWORD WINAPI WorkerThread(LPVOID /*param*/) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
+// Compile shader
+unsigned int compileShader(unsigned int type, const char* src) {
+    unsigned int shader = glCreateShader(type);
+    glShaderSource(shader, 1, &src, nullptr);
+    glCompileShader(shader);
+    int success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char info[512];
+        glGetShaderInfoLog(shader, 512, nullptr, info);
+        std::cerr << "Shader compile error: " << info << std::endl;
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
 
-    while (g_running) {
-        if (g_pause) {
-            Sleep(50);
-            continue;
+// Create shader program
+bool initShaders() {
+    unsigned int vertex = compileShader(GL_VERTEX_SHADER, vertexShaderSrc);
+    unsigned int fragment = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
+    if (!vertex || !fragment) return false;
+    shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertex);
+    glAttachShader(shaderProgram, fragment);
+    glLinkProgram(shaderProgram);
+    int success;
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        char info[512];
+        glGetProgramInfoLog(shaderProgram, 512, nullptr, info);
+        std::cerr << "Link error: " << info << std::endl;
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
+        return false;
+    }
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+    return true;
+}
+
+// Create geometry
+void initGeometry() {
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // Color attribute
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+}
+
+// Render text (simple overlay using glBitmap or textured quad? For simplicity, use glDrawPixels?
+// Better: use a textured quad with font atlas. But to keep it short, we'll just render a colored quad with FPS string using OpenGL ortho projection.
+// We'll create a simple 2D text overlay using a texture atlas? Too complex. Alternative: use OS native overlay via ImGui? Not needed.
+// For demonstration, we'll just draw a black rectangle and use glRasterPos + glut? No glut.
+// Let's implement a basic bitmap font using glBitmap? Requires bitmap data. Simpler: just print FPS to console and window title.
+// But to mimic MSI Afterburner, we can draw a small rectangle in corner and use GLFW window title to show FPS.
+// That's acceptable for test.
+void updateWindowTitle() {
+    char title[100];
+    sprintf_s(title, "FPS Checker - %.1f FPS", g_currentFPS);
+    glfwSetWindowTitle(g_window, title);
+}
+
+// Set up projection matrix
+void setProjectionMatrix(float fov, float aspect, float near, float far, float matrix[16]) {
+    float tanHalfFov = tanf(fov * 3.14159265f / 360.0f);
+    matrix[0] = 1.0f / (aspect * tanHalfFov);
+    matrix[1] = 0.0f;
+    matrix[2] = 0.0f;
+    matrix[3] = 0.0f;
+    matrix[4] = 0.0f;
+    matrix[5] = 1.0f / tanHalfFov;
+    matrix[6] = 0.0f;
+    matrix[7] = 0.0f;
+    matrix[8] = 0.0f;
+    matrix[9] = 0.0f;
+    matrix[10] = -(far + near) / (far - near);
+    matrix[11] = -1.0f;
+    matrix[12] = 0.0f;
+    matrix[13] = 0.0f;
+    matrix[14] = -(2.0f * far * near) / (far - near);
+    matrix[15] = 0.0f;
+}
+
+void setLookAt(Vec3 eye, Vec3 center, Vec3 up, float matrix[16]) {
+    Vec3 f = { center.x - eye.x, center.y - eye.y, center.z - eye.z };
+    float len = sqrtf(f.x*f.x + f.y*f.y + f.z*f.z);
+    f.x /= len; f.y /= len; f.z /= len;
+    Vec3 s = { up.y * f.z - up.z * f.y, up.z * f.x - up.x * f.z, up.x * f.y - up.y * f.x };
+    len = sqrtf(s.x*s.x + s.y*s.y + s.z*s.z);
+    s.x /= len; s.y /= len; s.z /= len;
+    Vec3 u = { f.y * s.z - f.z * s.y, f.z * s.x - f.x * s.z, f.x * s.y - f.y * s.x };
+    matrix[0] = s.x; matrix[4] = s.y; matrix[8] = s.z; matrix[12] = - (s.x*eye.x + s.y*eye.y + s.z*eye.z);
+    matrix[1] = u.x; matrix[5] = u.y; matrix[9] = u.z; matrix[13] = - (u.x*eye.x + u.y*eye.y + u.z*eye.z);
+    matrix[2] = -f.x; matrix[6] = -f.y; matrix[10] = -f.z; matrix[14] = (f.x*eye.x + f.y*eye.y + f.z*eye.z);
+    matrix[3] = 0.0f; matrix[7] = 0.0f; matrix[11] = 0.0f; matrix[15] = 1.0f;
+}
+
+void setIdentity(float m[16]) {
+    for (int i = 0; i < 16; ++i) m[i] = 0.0f;
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+void multiplyMatrices(float a[16], float b[16], float result[16]) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            result[i*4+j] = a[i*4+0]*b[0*4+j] + a[i*4+1]*b[1*4+j] + a[i*4+2]*b[2*4+j] + a[i*4+3]*b[3*4+j];
         }
+    }
+}
 
-        for (size_t i = 0; i < g_settings.points.size(); ++i) {
-            if (!g_settings.points[i].enabled) continue;
-            if (!g_running) break;
-
-            DoClick(g_settings.points[i]);
-            g_totalClicks++;
-            SetWindowText(g_hCountStatic, std::to_string(g_totalClicks).c_str());
-
-            int progress = (int)((i + 1) * 100 / g_settings.points.size());
-            SendMessage(g_hProgress, PBM_SETPOS, progress, 0);
-
-            // highlight current row
-            ListView_SetItemState(g_hList, i, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-
-            int baseDelay = (g_settings.cps > 0) ? (1000 / g_settings.cps) : 100;
-            int delay = baseDelay;
-            if (g_settings.randomDelay && g_settings.randomPercent > 0) {
-                int variation = baseDelay * g_settings.randomPercent / 100;
-                std::uniform_int_distribution<int> dist(-variation, variation);
-                delay = baseDelay + dist(gen);
-                if (delay < 1) delay = 1;
-            }
-            Sleep(delay);
-        }
-
-        if (!g_settings.loopMode) break;
+void updateAndRender() {
+    // Compute delta time and FPS
+    double now = glfwGetTime();
+    g_frameCount++;
+    if (now - g_lastTime >= 1.0) {
+        g_currentFPS = g_frameCount / (now - g_lastTime);
+        g_lastTime = now;
+        g_frameCount = 0;
+        updateWindowTitle();
     }
 
-    g_running = false;
-    PostMessage(g_hDlg, WM_APP, 0, 0);
+    // Clear screen
+    glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Update rotation angle
+    angle += 0.01f;
+    if (angle > 360.0f) angle -= 360.0f;
+
+    // Create model matrix (rotation around Y)
+    float model[16];
+    setIdentity(model);
+    float c = cosf(angle);
+    float s = sinf(angle);
+    model[0] = c;  model[2] = s;
+    model[8] = -s; model[10] = c;
+
+    // View matrix
+    float view[16];
+    setLookAt(camera.pos, camera.target, camera.up, view);
+
+    // Projection matrix
+    int width, height;
+    glfwGetFramebufferSize(g_window, &width, &height);
+    float aspect = (float)width / (float)height;
+    float proj[16];
+    setProjectionMatrix(camera.fov, aspect, 0.1f, 100.0f, proj);
+
+    // Use shader
+    glUseProgram(shaderProgram);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, model);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, view);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, proj);
+
+    // Draw cube
+    glBindVertexArray(VAO);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+
+    // Swap buffers
+    glfwSwapBuffers(g_window);
+    glfwPollEvents();
+}
+
+void cleanup() {
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteProgram(shaderProgram);
+    glfwDestroyWindow(g_window);
+    glfwTerminate();
+}
+
+int main() {
+    if (!initGLFW()) return -1;
+    if (!initShaders()) return -1;
+    initGeometry();
+
+    g_lastTime = glfwGetTime();
+
+    while (!glfwWindowShouldClose(g_window)) {
+        updateAndRender();
+        if (glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+            glfwSetWindowShouldClose(g_window, true);
+        if (glfwGetKey(g_window, GLFW_KEY_F1) == GLFW_PRESS)
+            g_showOverlay = !g_showOverlay; // just placeholder
+    }
+
+    cleanup();
     return 0;
-}
-
-// -------------------------------------------------------------
-// Start / Stop
-// -------------------------------------------------------------
-void StartClicker() {
-    if (g_settings.points.empty()) {
-        UpdateStatus("No click points added.", true);
-        return;
-    }
-    if (g_running) StopClicker();
-
-    g_running = true;
-    g_pause = false;
-    g_totalClicks = 0;
-    SetWindowText(g_hCountStatic, "0");
-    SendMessage(g_hProgress, PBM_SETPOS, 0, 0);
-    UpdateStatus("Running... Press F12 to stop");
-
-    EnableWindow(g_hAddBtn, FALSE);
-    EnableWindow(g_hRemoveBtn, FALSE);
-    EnableWindow(g_hPickBtn, FALSE);
-    EnableWindow(g_hStartBtn, FALSE);
-    EnableWindow(g_hStopBtn, TRUE);
-    SetFocus(g_hStopBtn);
-
-    g_hWorker = CreateThread(nullptr, 0, WorkerThread, nullptr, 0, nullptr);
-}
-
-void StopClicker() {
-    if (!g_running) return;
-    g_running = false;
-    if (g_hWorker) {
-        WaitForSingleObject(g_hWorker, 2000);
-        CloseHandle(g_hWorker);
-        g_hWorker = nullptr;
-    }
-    EnableWindow(g_hAddBtn, TRUE);
-    EnableWindow(g_hRemoveBtn, TRUE);
-    EnableWindow(g_hPickBtn, TRUE);
-    EnableWindow(g_hStartBtn, TRUE);
-    EnableWindow(g_hStopBtn, FALSE);
-    UpdateStatus("Stopped");
-    ListView_SetItemState(g_hList, -1, 0, LVIS_SELECTED);
-}
-
-// -------------------------------------------------------------
-// ListView helpers
-// -------------------------------------------------------------
-void AddPointToList(int index) {
-    const ClickPoint& pt = g_settings.points[index];
-    LVITEM lvi = {};
-    lvi.mask = LVIF_TEXT | LVIF_PARAM;
-    lvi.iItem = index;
-    lvi.iSubItem = 0;
-    char enabledText[4] = "Yes";
-    if (!pt.enabled) strcpy_s(enabledText, "No");
-    lvi.pszText = enabledText;
-    lvi.lParam = index;
-    ListView_InsertItem(g_hList, &lvi);
-
-    ListView_SetItemText(g_hList, index, 1, (char*)pt.label.c_str());
-    char buf[32];
-    sprintf_s(buf, "%d", pt.x);
-    ListView_SetItemText(g_hList, index, 2, buf);
-    sprintf_s(buf, "%d", pt.y);
-    ListView_SetItemText(g_hList, index, 3, buf);
-    const char* types[] = { "Left", "Right", "Middle" };
-    ListView_SetItemText(g_hList, index, 4, (char*)types[pt.clickType]);
-}
-
-void RefreshList() {
-    ListView_DeleteAllItems(g_hList);
-    for (size_t i = 0; i < g_settings.points.size(); ++i)
-        AddPointToList((int)i);
-}
-
-void AddPoint(int x, int y, const char* label, int clickType) {
-    ClickPoint pt;
-    pt.x = x; pt.y = y;
-    pt.label = label ? label : ("Point " + std::to_string(g_settings.points.size() + 1));
-    pt.enabled = true;
-    pt.clickType = clickType;
-    g_settings.points.push_back(pt);
-    RefreshList();
-    SaveSettings();
-    UpdateStatus("Point added.");
-}
-
-void RemoveSelectedPoint() {
-    int sel = ListView_GetNextItem(g_hList, -1, LVNI_SELECTED);
-    if (sel >= 0 && sel < (int)g_settings.points.size()) {
-        g_settings.points.erase(g_settings.points.begin() + sel);
-        RefreshList();
-        SaveSettings();
-        UpdateStatus("Point removed.");
-    }
-}
-
-void PickPosition() {
-    g_isPicking = true;
-    SetCapture(g_hDlg);
-    SetCursor(LoadCursor(nullptr, IDC_CROSS));
-    UpdateStatus("Move mouse and press LEFT CLICK to capture.");
-}
-
-// -------------------------------------------------------------
-// Settings I/O
-// -------------------------------------------------------------
-void SaveSettings() {
-    std::ofstream f("autoclicker.cfg");
-    if (!f) return;
-    f << g_settings.cps << "\n";
-    f << g_settings.randomDelay << "\n";
-    f << g_settings.randomPercent << "\n";
-    f << g_settings.loopMode << "\n";
-    f << g_settings.points.size() << "\n";
-    for (auto& pt : g_settings.points) {
-        f << pt.x << " " << pt.y << " " << pt.enabled << " " << pt.clickType << " " << pt.label << "\n";
-    }
-}
-
-void LoadSettings() {
-    std::ifstream f("autoclicker.cfg");
-    if (!f) return;
-    f >> g_settings.cps;
-    f >> g_settings.randomDelay;
-    f >> g_settings.randomPercent;
-    f >> g_settings.loopMode;
-    size_t n;
-    f >> n;
-    g_settings.points.clear();
-    for (size_t i = 0; i < n; ++i) {
-        ClickPoint pt;
-        f >> pt.x >> pt.y >> pt.enabled >> pt.clickType;
-        std::getline(f, pt.label);
-        if (!pt.label.empty() && pt.label[0] == ' ') pt.label.erase(0, 1);
-        g_settings.points.push_back(pt);
-    }
-    ApplySettingsToUI();
-    RefreshList();
-}
-
-void ApplySettingsToUI() {
-    char buf[16];
-    sprintf_s(buf, "%d", g_settings.cps);
-    int idx = (int)SendMessage(g_hCpsCombo, CB_FINDSTRINGEXACT, -1, (LPARAM)buf);
-    if (idx != CB_ERR) SendMessage(g_hCpsCombo, CB_SETCURSEL, idx, 0);
-    SendMessage(g_hRandomCheck, BM_SETCHECK, g_settings.randomDelay ? BST_CHECKED : BST_UNCHECKED, 0);
-    SetWindowText(g_hRandomSpin, std::to_string(g_settings.randomPercent).c_str());
-    SendMessage(g_hLoopCheck, BM_SETCHECK, g_settings.loopMode ? BST_CHECKED : BST_UNCHECKED, 0);
-}
-
-void UpdateStatus(const char* text, bool error) {
-    SetWindowText(g_hStatusStatic, text);
-}
-
-// -------------------------------------------------------------
-// Dialog Procedure (window callback)
-// -------------------------------------------------------------
-LRESULT CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-        case WM_CREATE:
-            return 0;
-
-        case WM_INITDIALOG:
-        {
-            g_hDlg = hDlg;
-            RECT rc;
-            GetClientRect(hDlg, &rc);
-
-            // ListView
-            g_hList = CreateWindow(WC_LISTVIEW, "", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL,
-                10, 10, rc.right - 20, 200, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            if (!g_hList) {
-                MessageBox(hDlg, "Failed to create ListView", "Error", MB_OK);
-                return FALSE;
-            }
-            LVCOLUMN col = {};
-            col.mask = LVCF_TEXT | LVCF_WIDTH;
-            col.cx = 60;  col.pszText = "Enabled"; ListView_InsertColumn(g_hList, 0, &col);
-            col.cx = 100; col.pszText = "Label";   ListView_InsertColumn(g_hList, 1, &col);
-            col.cx = 60;  col.pszText = "X";       ListView_InsertColumn(g_hList, 2, &col);
-            col.cx = 60;  col.pszText = "Y";       ListView_InsertColumn(g_hList, 3, &col);
-            col.cx = 80;  col.pszText = "Type";    ListView_InsertColumn(g_hList, 4, &col);
-
-            // Buttons
-            g_hAddBtn = CreateWindow("BUTTON", "Add", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                10, 220, 60, 25, hDlg, (HMENU)1, GetModuleHandle(nullptr), nullptr);
-            g_hRemoveBtn = CreateWindow("BUTTON", "Remove", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                80, 220, 70, 25, hDlg, (HMENU)2, GetModuleHandle(nullptr), nullptr);
-            g_hPickBtn = CreateWindow("BUTTON", "Pick Pos", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                160, 220, 80, 25, hDlg, (HMENU)3, GetModuleHandle(nullptr), nullptr);
-
-            // CPS combobox
-            CreateWindow("STATIC", "CPS:", WS_CHILD | WS_VISIBLE,
-                10, 260, 40, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            g_hCpsCombo = CreateWindow("COMBOBOX", "", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN,
-                50, 258, 60, 100, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            int cps_vals[] = { 1,2,5,10,20,50,100,200,500 };
-            for (int v : cps_vals) {
-                char buf[16];
-                sprintf_s(buf, "%d", v);
-                SendMessage(g_hCpsCombo, CB_ADDSTRING, 0, (LPARAM)buf);
-            }
-
-            // Random delay
-            g_hRandomCheck = CreateWindow("BUTTON", "Random Delay", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                130, 260, 100, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            CreateWindow("STATIC", "%:", WS_CHILD | WS_VISIBLE,
-                240, 260, 20, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            g_hRandomSpin = CreateWindow("EDIT", "20", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER,
-                270, 258, 40, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-
-            // Loop mode
-            g_hLoopCheck = CreateWindow("BUTTON", "Loop Mode", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                330, 260, 90, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-
-            // Start/Stop
-            g_hStartBtn = CreateWindow("BUTTON", "Start (F12)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                10, 300, 100, 30, hDlg, (HMENU)10, GetModuleHandle(nullptr), nullptr);
-            g_hStopBtn = CreateWindow("BUTTON", "Stop", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                120, 300, 80, 30, hDlg, (HMENU)11, GetModuleHandle(nullptr), nullptr);
-            EnableWindow(g_hStopBtn, FALSE);
-
-            // Status and counters
-            g_hStatusStatic = CreateWindow("STATIC", "Ready. F12 = start/stop", WS_CHILD | WS_VISIBLE,
-                10, 340, 400, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            CreateWindow("STATIC", "Clicks:", WS_CHILD | WS_VISIBLE,
-                10, 370, 50, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            g_hCountStatic = CreateWindow("STATIC", "0", WS_CHILD | WS_VISIBLE,
-                60, 370, 100, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-
-            // Progress bar
-            g_hProgress = CreateWindow(PROGRESS_CLASS, "", WS_CHILD | WS_VISIBLE,
-                10, 400, 400, 20, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
-            SendMessage(g_hProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-
-            LoadSettings();
-            RegisterHotKey(hDlg, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_F12);
-            return TRUE;
-        }
-
-        case WM_COMMAND:
-        {
-            int id = LOWORD(wParam);
-            if (id == 1) AddPoint(100, 100, nullptr, 0);
-            else if (id == 2) RemoveSelectedPoint();
-            else if (id == 3) PickPosition();
-            else if (id == 10) {
-                // read UI settings
-                char buf[16];
-                int idx = (int)SendMessage(g_hCpsCombo, CB_GETCURSEL, 0, 0);
-                SendMessage(g_hCpsCombo, CB_GETLBTEXT, idx, (LPARAM)buf);
-                g_settings.cps = atoi(buf);
-                g_settings.randomDelay = (SendMessage(g_hRandomCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
-                GetWindowText(g_hRandomSpin, buf, 16);
-                g_settings.randomPercent = atoi(buf);
-                g_settings.loopMode = (SendMessage(g_hLoopCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
-                SaveSettings();
-                StartClicker();
-            }
-            else if (id == 11) StopClicker();
-            break;
-        }
-
-        case WM_HOTKEY:
-            if (wParam == HOTKEY_ID) {
-                if (g_running) StopClicker(); else StartClicker();
-            }
-            break;
-
-        case WM_APP:
-            StopClicker();
-            break;
-
-        case WM_LBUTTONDOWN:
-            if (g_isPicking) {
-                ReleaseCapture();
-                g_isPicking = false;
-                SetCursor(LoadCursor(nullptr, IDC_ARROW));
-                POINT pt;
-                GetCursorPos(&pt);
-                AddPoint(pt.x, pt.y, nullptr, 0);
-                UpdateStatus("Point captured.");
-                return TRUE;
-            }
-            break;
-
-        case WM_CLOSE:
-            StopClicker();
-            SaveSettings();
-            DestroyWindow(hDlg);
-            break;
-
-        case WM_DESTROY:
-            UnregisterHotKey(hDlg, HOTKEY_ID);
-            PostQuitMessage(0);
-            break;
-
-        default:
-            return DefWindowProc(hDlg, msg, wParam, lParam);
-    }
-    return 0;
-}
-
-// -------------------------------------------------------------
-// WinMain entry point
-// -------------------------------------------------------------
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
-    // Initialize common controls
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES };
-    if (!InitCommonControlsEx(&icc)) {
-        MessageBox(NULL, "Failed to initialize common controls", "Error", MB_ICONERROR);
-        return 1;
-    }
-
-    // Register window class
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = DlgProc;
-    wc.hInstance = hInst;
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.lpszClassName = "AutoClickerClass";
-    if (!RegisterClass(&wc)) {
-        MessageBox(NULL, "Failed to register window class", "Error", MB_ICONERROR);
-        return 1;
-    }
-
-    // Create window
-    HWND hWnd = CreateWindowEx(
-        0,
-        "AutoClickerClass",
-        "AutoClicker Pro",
-        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        450, 480,
-        NULL, NULL, hInst, NULL
-    );
-
-    if (!hWnd) {
-        DWORD err = GetLastError();
-        char buf[256];
-        sprintf_s(buf, "Failed to create window. Error code: %lu", err);
-        MessageBox(NULL, buf, "Error", MB_ICONERROR);
-        return 1;
-    }
-
-    ShowWindow(hWnd, nCmdShow);
-    UpdateWindow(hWnd);
-
-    // Message loop
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-
-    return (int)msg.wParam;
 }
