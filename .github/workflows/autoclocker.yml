@@ -1,4 +1,4 @@
-name: Build FpsChecker
+name: Build Load Tester
 
 on: workflow_dispatch
 
@@ -7,21 +7,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install GLFW via vcpkg
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Compile
+        shell: cmd
         run: |
-          git clone https://github.com/Microsoft/vcpkg.git
-          .\vcpkg\bootstrap-vcpkg.bat
-          .\vcpkg\vcpkg install glfw3
-      
-      - name: Configure CMake
-        run: |
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
-      
-      - name: Build Release
-        run: cmake --build build --config Release
-      
+          cl main.cpp /O2 /MT /FeLoadTester.exe user32.lib comctl32.lib iphlpapi.lib ws2_32.lib
       - uses: actions/upload-artifact@v4
         with:
-          name: FpsChecker-Win64
-          path: build/Release/FpsChecker.exe
+          name: LoadTester.exe
+          path: LoadTester.exe
