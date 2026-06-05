@@ -1,17 +1,26 @@
-name: Build AutoClicker (Single File)
+name: Build AutoClicker
 
-on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:  # ручной запуск через кнопку Run workflow
 
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Compile with MSVC
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC compiler
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile
+        shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           cl main.cpp /O2 /MT /FeAutoClicker.exe user32.lib comctl32.lib gdi32.lib shell32.lib
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: AutoClicker.exe
           path: AutoClicker.exe
