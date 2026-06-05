@@ -3,23 +3,25 @@ name: Build FpsChecker
 on: workflow_dispatch
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install vcpkg and deps
+      
+      - name: Install GLFW via vcpkg
         run: |
           git clone https://github.com/Microsoft/vcpkg.git
-          cd vcpkg
-          .\bootstrap-vcpkg.bat
-          .\vcpkg install glfw3 glad
+          .\vcpkg\bootstrap-vcpkg.bat
+          .\vcpkg\vcpkg install glfw3
+      
       - name: Configure CMake
         run: |
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
-      - name: Build
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+      
+      - name: Build Release
         run: cmake --build build --config Release
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      
+      - uses: actions/upload-artifact@v4
         with:
-          name: FpsChecker.exe
+          name: FpsChecker-Win64
           path: build/Release/FpsChecker.exe
