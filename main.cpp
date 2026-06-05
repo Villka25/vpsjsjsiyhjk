@@ -1,31 +1,23 @@
-// main.cpp – AutoClicker Pro (Single File, WinAPI)
-// Compile: cl main.cpp /O2 /MT /FeAutoClicker.exe user32.lib gdi32.lib comctl32.lib shell32.lib
-// Or with MinGW: g++ main.cpp -O2 -mwindows -static -o AutoClicker.exe -lcomctl32 -lgdi32
-
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commctrl.h>
 #include <cstdio>
-#include <cstdlib>
 #include <vector>
 #include <string>
 #include <random>
 #include <chrono>
 #include <thread>
 #include <fstream>
-#include <sstream>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
-// -------------------------------------------------------------
 // Structures
-// -------------------------------------------------------------
 struct ClickPoint {
     int x = 0, y = 0;
     std::string label;
     bool enabled = true;
-    int clickType = 0;   // 0=left,1=right,2=middle
+    int clickType = 0; // 0 left, 1 right, 2 middle
 };
 
 struct Settings {
@@ -36,96 +28,66 @@ struct Settings {
     bool loopMode = true;
 };
 
-// -------------------------------------------------------------
-// Global Variables
-// -------------------------------------------------------------
+// Globals
 Settings g_settings;
 HWND g_hDlg = nullptr;
-HINSTANCE g_hInst = nullptr;
-HIMAGELIST g_himl = nullptr;
 HWND g_hList = nullptr;
 HWND g_hCpsCombo, g_hRandomCheck, g_hRandomSpin, g_hLoopCheck;
 HWND g_hStartBtn, g_hStopBtn, g_hAddBtn, g_hRemoveBtn, g_hPickBtn;
 HWND g_hStatusStatic, g_hCountStatic, g_hProgress;
 HANDLE g_hWorker = nullptr;
-DWORD g_workerThreadId = 0;
 volatile bool g_running = false;
 volatile bool g_pause = false;
 int g_totalClicks = 0;
-UINT_PTR g_timerId = 0;
 bool g_isPicking = false;
-POINT g_pickPoint = {0,0};
-
-// Hotkey ID
 const UINT HOTKEY_ID = 1;
 
-// -------------------------------------------------------------
 // Forward declarations
-// -------------------------------------------------------------
-LRESULT CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam);
-void AddPointToList(const ClickPoint& pt, int index);
+INT_PTR CALLBACK DlgProc(HWND, UINT, WPARAM, LPARAM);
+void AddPointToList(int index);
 void RefreshList();
 void SaveSettings();
 void LoadSettings();
 void ApplySettingsToUI();
 void UpdateStatus(const char* text, bool error = false);
 void DoClick(const ClickPoint& pt);
-DWORD WINAPI WorkerThread(LPVOID lpParam);
+DWORD WINAPI WorkerThread(LPVOID);
 void StartClicker();
 void StopClicker();
 void AddPoint(int x, int y, const char* label, int clickType);
 void RemoveSelectedPoint();
 void PickPosition();
 
-// -------------------------------------------------------------
-// Helper: Simulate mouse click
-// -------------------------------------------------------------
+// Helper: simulate click
 void DoClick(const ClickPoint& pt) {
-    // Move cursor
     SetCursorPos(pt.x, pt.y);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-
-    DWORD downFlag = 0, upFlag = 0;
-    switch (pt.clickType) {
-        case 0: downFlag = MOUSEEVENTF_LEFTDOWN; upFlag = MOUSEEVENTF_LEFTUP; break;
-        case 1: downFlag = MOUSEEVENTF_RIGHTDOWN; upFlag = MOUSEEVENTF_RIGHTUP; break;
-        case 2: downFlag = MOUSEEVENTF_MIDDLEDOWN; upFlag = MOUSEEVENTF_MIDDLEUP; break;
-    }
+    DWORD down = 0, up = 0;
+    if (pt.clickType == 0) { down = MOUSEEVENTF_LEFTDOWN; up = MOUSEEVENTF_LEFTUP; }
+    else if (pt.clickType == 1) { down = MOUSEEVENTF_RIGHTDOWN; up = MOUSEEVENTF_RIGHTUP; }
+    else { down = MOUSEEVENTF_MIDDLEDOWN; up = MOUSEEVENTF_MIDDLEUP; }
     INPUT inputs[2] = {};
-    inputs[0].type = INPUT_MOUSE; inputs[0].mi.dwFlags = downFlag;
-    inputs[1].type = INPUT_MOUSE; inputs[1].mi.dwFlags = upFlag;
+    inputs[0].type = INPUT_MOUSE; inputs[0].mi.dwFlags = down;
+    inputs[1].type = INPUT_MOUSE; inputs[1].mi.dwFlags = up;
     SendInput(2, inputs, sizeof(INPUT));
 }
 
-// -------------------------------------------------------------
-// Worker Thread (actual clicking)
-// -------------------------------------------------------------
-DWORD WINAPI WorkerThread(LPVOID /*lpParam*/) {
+// Worker thread
+DWORD WINAPI WorkerThread(LPVOID) {
     std::random_device rd;
     std::mt19937 gen(rd());
-
     while (g_running) {
-        if (g_pause) {
-            Sleep(50);
-            continue;
-        }
-
-        // Cycle through enabled points
+        if (g_pause) { Sleep(50); continue; }
         for (size_t i = 0; i < g_settings.points.size(); ++i) {
             if (!g_settings.points[i].enabled) continue;
             if (!g_running) break;
-
             DoClick(g_settings.points[i]);
-            g_totalClicks++;
-            SetDlgItemInt(g_hDlg, 0, g_totalClicks, FALSE); // using ID 0 as temp
-
-            // Update progress bar and highlight selected row
+            ++g_totalClicks;
+            SetWindowText(g_hCountStatic, std::to_string(g_totalClicks).c_str());
             int progress = (int)((i+1) * 100 / g_settings.points.size());
             SendMessage(g_hProgress, PBM_SETPOS, progress, 0);
+            // Highlight current row
             ListView_SetItemState(g_hList, i, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-            ListView_EnsureVisible(g_hList, i, FALSE);
-
-            // Delay based on CPS
             int baseDelay = (g_settings.cps > 0) ? (1000 / g_settings.cps) : 100;
             int delay = baseDelay;
             if (g_settings.randomDelay && g_settings.randomPercent > 0) {
@@ -136,73 +98,56 @@ DWORD WINAPI WorkerThread(LPVOID /*lpParam*/) {
             }
             Sleep(delay);
         }
-
-        if (!g_settings.loopMode) break; // one cycle only
+        if (!g_settings.loopMode) break;
     }
-
     g_running = false;
-    PostMessage(g_hDlg, WM_APP, 0, 0); // notify stop
+    PostMessage(g_hDlg, WM_APP, 0, 0);
     return 0;
 }
 
-// -------------------------------------------------------------
-// Start / Stop
-// -------------------------------------------------------------
 void StartClicker() {
-    if (g_settings.points.empty()) {
-        UpdateStatus("No click points added.", true);
-        return;
-    }
+    if (g_settings.points.empty()) { UpdateStatus("No points added.", true); return; }
     if (g_running) StopClicker();
-
     g_running = true;
     g_pause = false;
     g_totalClicks = 0;
-    SetDlgItemText(g_hDlg, 0, "0");
+    SetWindowText(g_hCountStatic, "0");
     SendMessage(g_hProgress, PBM_SETPOS, 0, 0);
     UpdateStatus("Running... Press F12 to stop");
-    EnableWindow(GetDlgItem(g_hDlg, 1), FALSE); // disable Add
-    EnableWindow(GetDlgItem(g_hDlg, 2), FALSE); // disable Remove
-    EnableWindow(GetDlgItem(g_hDlg, 3), FALSE); // disable Pick
+    EnableWindow(g_hAddBtn, FALSE);
+    EnableWindow(g_hRemoveBtn, FALSE);
+    EnableWindow(g_hPickBtn, FALSE);
     EnableWindow(g_hStartBtn, FALSE);
     EnableWindow(g_hStopBtn, TRUE);
     SetFocus(g_hStopBtn);
-
-    g_hWorker = CreateThread(nullptr, 0, WorkerThread, nullptr, 0, &g_workerThreadId);
+    g_hWorker = CreateThread(nullptr, 0, WorkerThread, nullptr, 0, nullptr);
 }
 
 void StopClicker() {
     if (!g_running) return;
     g_running = false;
-    if (g_hWorker) {
-        WaitForSingleObject(g_hWorker, 2000);
-        CloseHandle(g_hWorker);
-        g_hWorker = nullptr;
-    }
-    EnableWindow(GetDlgItem(g_hDlg, 1), TRUE);
-    EnableWindow(GetDlgItem(g_hDlg, 2), TRUE);
-    EnableWindow(GetDlgItem(g_hDlg, 3), TRUE);
+    if (g_hWorker) { WaitForSingleObject(g_hWorker, 2000); CloseHandle(g_hWorker); g_hWorker = nullptr; }
+    EnableWindow(g_hAddBtn, TRUE);
+    EnableWindow(g_hRemoveBtn, TRUE);
+    EnableWindow(g_hPickBtn, TRUE);
     EnableWindow(g_hStartBtn, TRUE);
     EnableWindow(g_hStopBtn, FALSE);
-    UpdateStatus("Stopped.");
+    UpdateStatus("Stopped");
     ListView_SetItemState(g_hList, -1, 0, LVIS_SELECTED);
 }
 
-// -------------------------------------------------------------
-// ListView helpers
-// -------------------------------------------------------------
-void AddPointToList(const ClickPoint& pt, int index) {
+void AddPointToList(int index) {
+    const ClickPoint& pt = g_settings.points[index];
     LVITEM lvi = {};
-    lvi.mask = LVIF_TEXT | LVIF_IMAGE | LVIF_PARAM;
+    lvi.mask = LVIF_TEXT | LVIF_PARAM;
     lvi.iItem = index;
     lvi.iSubItem = 0;
-    lvi.pszText = (char*)(pt.enabled ? "Yes" : "No");
-    lvi.iImage = 0;
-    lvi.lParam = (LPARAM)(new ClickPoint(pt));
+    char enabledText[4] = "Yes";
+    if (!pt.enabled) strcpy(enabledText, "No");
+    lvi.pszText = enabledText;
+    lvi.lParam = index;
     ListView_InsertItem(g_hList, &lvi);
-
-    std::string lbl = pt.label.empty() ? std::to_string(index+1) : pt.label;
-    ListView_SetItemText(g_hList, index, 1, (char*)lbl.c_str());
+    ListView_SetItemText(g_hList, index, 1, (char*)pt.label.c_str());
     char buf[32];
     sprintf_s(buf, "%d", pt.x);
     ListView_SetItemText(g_hList, index, 2, buf);
@@ -214,9 +159,8 @@ void AddPointToList(const ClickPoint& pt, int index) {
 
 void RefreshList() {
     ListView_DeleteAllItems(g_hList);
-    for (size_t i = 0; i < g_settings.points.size(); ++i) {
-        AddPointToList(g_settings.points[i], (int)i);
-    }
+    for (size_t i = 0; i < g_settings.points.size(); ++i)
+        AddPointToList((int)i);
 }
 
 void AddPoint(int x, int y, const char* label, int clickType) {
@@ -234,7 +178,6 @@ void AddPoint(int x, int y, const char* label, int clickType) {
 void RemoveSelectedPoint() {
     int sel = ListView_GetNextItem(g_hList, -1, LVNI_SELECTED);
     if (sel >= 0 && sel < (int)g_settings.points.size()) {
-        delete (ClickPoint*)ListView_GetItemParam(g_hList, sel);
         g_settings.points.erase(g_settings.points.begin() + sel);
         RefreshList();
         SaveSettings();
@@ -246,12 +189,9 @@ void PickPosition() {
     g_isPicking = true;
     SetCapture(g_hDlg);
     SetCursor(LoadCursor(nullptr, IDC_CROSS));
-    UpdateStatus("Move mouse and press LEFT CLICK to capture position.");
+    UpdateStatus("Move mouse and press LEFT CLICK to capture.");
 }
 
-// -------------------------------------------------------------
-// Settings I/O
-// -------------------------------------------------------------
 void SaveSettings() {
     std::ofstream f("autoclicker.cfg");
     if (!f) return;
@@ -260,9 +200,8 @@ void SaveSettings() {
     f << g_settings.randomPercent << "\n";
     f << g_settings.loopMode << "\n";
     f << g_settings.points.size() << "\n";
-    for (auto& pt : g_settings.points) {
+    for (auto& pt : g_settings.points)
         f << pt.x << " " << pt.y << " " << pt.enabled << " " << pt.clickType << " " << pt.label << "\n";
-    }
 }
 
 void LoadSettings() {
@@ -287,124 +226,85 @@ void LoadSettings() {
 }
 
 void ApplySettingsToUI() {
-    // CPS combobox
     char buf[16];
     sprintf_s(buf, "%d", g_settings.cps);
-    ComboBox_SetText(g_hCpsCombo, buf);
-    Button_SetCheck(g_hRandomCheck, g_settings.randomDelay ? BST_CHECKED : BST_UNCHECKED);
-    SetDlgItemInt(g_hDlg, 100, g_settings.randomPercent, FALSE); // ID 100 for spin
-    Button_SetCheck(g_hLoopCheck, g_settings.loopMode ? BST_CHECKED : BST_UNCHECKED);
+    SendMessage(g_hCpsCombo, CB_SETCURSEL, SendMessage(g_hCpsCombo, CB_FINDSTRINGEXACT, -1, (LPARAM)buf), 0);
+    SendMessage(g_hRandomCheck, BM_SETCHECK, g_settings.randomDelay ? BST_CHECKED : BST_UNCHECKED, 0);
+    SetWindowText(g_hRandomSpin, std::to_string(g_settings.randomPercent).c_str());
+    SendMessage(g_hLoopCheck, BM_SETCHECK, g_settings.loopMode ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
 void UpdateStatus(const char* text, bool error) {
     SetWindowText(g_hStatusStatic, text);
-    if (error) SetWindowText(g_hStatusStatic, text); // could color, but simple
 }
 
-// -------------------------------------------------------------
-// Dialog Procedure
-// -------------------------------------------------------------
+// Dialog procedure
 INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_INITDIALOG: {
             g_hDlg = hDlg;
-            // Create ListView
             RECT rc;
             GetClientRect(hDlg, &rc);
             g_hList = CreateWindow(WC_LISTVIEW, "", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL,
-                                   10, 10, rc.right-20, 200, hDlg, nullptr, g_hInst, nullptr);
+                                   10, 10, rc.right-20, 200, hDlg, nullptr, GetModuleHandle(nullptr), nullptr);
             LVCOLUMN col = {};
             col.mask = LVCF_TEXT | LVCF_WIDTH;
             col.cx = 60; col.pszText = "Enabled"; ListView_InsertColumn(g_hList, 0, &col);
             col.cx = 100; col.pszText = "Label"; ListView_InsertColumn(g_hList, 1, &col);
             col.cx = 60; col.pszText = "X"; ListView_InsertColumn(g_hList, 2, &col);
             col.cx = 60; col.pszText = "Y"; ListView_InsertColumn(g_hList, 3, &col);
-            col.cx = 80; col.pszText = "Click Type"; ListView_InsertColumn(g_hList, 4, &col);
+            col.cx = 80; col.pszText = "Type"; ListView_InsertColumn(g_hList, 4, &col);
 
-            // Controls
-            CreateWindow("BUTTON", "Add Point", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                         10, 220, 80, 25, hDlg, (HMENU)1, g_hInst, nullptr);
-            CreateWindow("BUTTON", "Remove", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                         100, 220, 80, 25, hDlg, (HMENU)2, g_hInst, nullptr);
-            g_hPickBtn = CreateWindow("BUTTON", "Pick Pos", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                     190, 220, 80, 25, hDlg, (HMENU)3, g_hInst, nullptr);
-            CreateWindow("STATIC", "CPS:", WS_CHILD | WS_VISIBLE,
-                         10, 260, 40, 20, hDlg, nullptr, g_hInst, nullptr);
-            g_hCpsCombo = CreateWindow("COMBOBOX", "", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN,
-                                       50, 258, 60, 100, hDlg, nullptr, g_hInst, nullptr);
-            for (int cps : {1,2,5,10,20,50,100,200,500}) {
-                char buf[16];
-                sprintf_s(buf, "%d", cps);
-                SendMessage(g_hCpsCombo, CB_ADDSTRING, 0, (LPARAM)buf);
-            }
-            g_hRandomCheck = CreateWindow("BUTTON", "Random Delay", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                          130, 260, 100, 20, hDlg, nullptr, g_hInst, nullptr);
-            CreateWindow("STATIC", "%:", WS_CHILD | WS_VISIBLE,
-                         240, 260, 20, 20, hDlg, nullptr, g_hInst, nullptr);
-            g_hRandomSpin = CreateWindow("EDIT", "20", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER,
-                                         270, 258, 40, 20, hDlg, (HMENU)100, g_hInst, nullptr);
-            g_hLoopCheck = CreateWindow("BUTTON", "Loop Mode", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                        330, 260, 90, 20, hDlg, nullptr, g_hInst, nullptr);
-
-            g_hStartBtn = CreateWindow("BUTTON", "Start (F12)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                       10, 300, 100, 30, hDlg, (HMENU)10, g_hInst, nullptr);
-            g_hStopBtn = CreateWindow("BUTTON", "Stop", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                      120, 300, 80, 30, hDlg, (HMENU)11, g_hInst, nullptr);
+            g_hAddBtn = CreateWindow("BUTTON", "Add", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 10, 220, 60, 25, hDlg, (HMENU)1, nullptr, nullptr);
+            g_hRemoveBtn = CreateWindow("BUTTON", "Remove", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 80, 220, 70, 25, hDlg, (HMENU)2, nullptr, nullptr);
+            g_hPickBtn = CreateWindow("BUTTON", "Pick Pos", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 160, 220, 80, 25, hDlg, (HMENU)3, nullptr, nullptr);
+            CreateWindow("STATIC", "CPS:", WS_CHILD | WS_VISIBLE, 10, 260, 40, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hCpsCombo = CreateWindow("COMBOBOX", "", WS_CHILD | WS_VISIBLE | CBS_DROPDOWN, 50, 258, 60, 100, hDlg, nullptr, nullptr, nullptr);
+            int cps_vals[] = {1,2,5,10,20,50,100,200,500};
+            for (int v : cps_vals) { char buf[16]; sprintf_s(buf, "%d", v); SendMessage(g_hCpsCombo, CB_ADDSTRING, 0, (LPARAM)buf); }
+            g_hRandomCheck = CreateWindow("BUTTON", "Random Delay", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 130, 260, 100, 20, hDlg, nullptr, nullptr, nullptr);
+            CreateWindow("STATIC", "%:", WS_CHILD | WS_VISIBLE, 240, 260, 20, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hRandomSpin = CreateWindow("EDIT", "20", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER, 270, 258, 40, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hLoopCheck = CreateWindow("BUTTON", "Loop Mode", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 330, 260, 90, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hStartBtn = CreateWindow("BUTTON", "Start (F12)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 10, 300, 100, 30, hDlg, (HMENU)10, nullptr, nullptr);
+            g_hStopBtn = CreateWindow("BUTTON", "Stop", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 120, 300, 80, 30, hDlg, (HMENU)11, nullptr, nullptr);
             EnableWindow(g_hStopBtn, FALSE);
-            g_hStatusStatic = CreateWindow("STATIC", "Ready. F12 = start/stop", WS_CHILD | WS_VISIBLE,
-                                           10, 340, 400, 20, hDlg, nullptr, g_hInst, nullptr);
-            CreateWindow("STATIC", "Total clicks:", WS_CHILD | WS_VISIBLE,
-                         10, 370, 80, 20, hDlg, nullptr, g_hInst, nullptr);
-            g_hCountStatic = CreateWindow("STATIC", "0", WS_CHILD | WS_VISIBLE,
-                                          100, 370, 100, 20, hDlg, nullptr, g_hInst, nullptr);
-            g_hProgress = CreateWindow(PROGRESS_CLASS, "", WS_CHILD | WS_VISIBLE,
-                                       10, 400, 400, 20, hDlg, nullptr, g_hInst, nullptr);
+            g_hStatusStatic = CreateWindow("STATIC", "Ready. F12 start/stop", WS_CHILD | WS_VISIBLE, 10, 340, 400, 20, hDlg, nullptr, nullptr, nullptr);
+            CreateWindow("STATIC", "Clicks:", WS_CHILD | WS_VISIBLE, 10, 370, 50, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hCountStatic = CreateWindow("STATIC", "0", WS_CHILD | WS_VISIBLE, 60, 370, 100, 20, hDlg, nullptr, nullptr, nullptr);
+            g_hProgress = CreateWindow(PROGRESS_CLASS, "", WS_CHILD | WS_VISIBLE, 10, 400, 400, 20, hDlg, nullptr, nullptr, nullptr);
             SendMessage(g_hProgress, PBM_SETRANGE, 0, MAKELPARAM(0,100));
-
             LoadSettings();
             RegisterHotKey(hDlg, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_F12);
             return TRUE;
         }
-
         case WM_COMMAND: {
             int id = LOWORD(wParam);
-            if (id == 1) { // Add
-                AddPoint(100, 100, nullptr, 0);
-            } else if (id == 2) { // Remove
-                RemoveSelectedPoint();
-            } else if (id == 3) { // Pick Pos
-                PickPosition();
-            } else if (id == 10) { // Start
-                // read settings from UI
+            if (id == 1) AddPoint(100, 100, nullptr, 0);
+            else if (id == 2) RemoveSelectedPoint();
+            else if (id == 3) PickPosition();
+            else if (id == 10) {
+                // Read settings from UI
                 char buf[16];
-                ComboBox_GetText(g_hCpsCombo, buf, 16);
+                int idx = SendMessage(g_hCpsCombo, CB_GETCURSEL, 0, 0);
+                SendMessage(g_hCpsCombo, CB_GETLBTEXT, idx, (LPARAM)buf);
                 g_settings.cps = atoi(buf);
-                g_settings.randomDelay = (Button_GetCheck(g_hRandomCheck) == BST_CHECKED);
-                g_settings.randomPercent = GetDlgItemInt(hDlg, 100, nullptr, FALSE);
-                g_settings.loopMode = (Button_GetCheck(g_hLoopCheck) == BST_CHECKED);
+                g_settings.randomDelay = (SendMessage(g_hRandomCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                GetWindowText(g_hRandomSpin, buf, 16);
+                g_settings.randomPercent = atoi(buf);
+                g_settings.loopMode = (SendMessage(g_hLoopCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
                 SaveSettings();
                 StartClicker();
-            } else if (id == 11) { // Stop
-                StopClicker();
-            } else if (id == 100) { // random percent edit
-                // ignore, read later
-            }
+            } else if (id == 11) StopClicker();
             break;
         }
-
         case WM_HOTKEY: {
             if (wParam == HOTKEY_ID) {
-                if (g_running) StopClicker();
-                else StartClicker();
+                if (g_running) StopClicker(); else StartClicker();
             }
             break;
         }
-
-        case WM_APP: { // worker finished
-            StopClicker();
-            break;
-        }
-
+        case WM_APP: StopClicker(); break;
         case WM_LBUTTONDOWN: {
             if (g_isPicking) {
                 ReleaseCapture();
@@ -418,46 +318,34 @@ INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
         }
-
         case WM_CLOSE: {
             StopClicker();
             SaveSettings();
             DestroyWindow(hDlg);
             break;
         }
-
         case WM_DESTROY: {
             UnregisterHotKey(hDlg, HOTKEY_ID);
             PostQuitMessage(0);
             break;
         }
-
         default: return FALSE;
     }
     return FALSE;
 }
 
-// -------------------------------------------------------------
-// WinMain Entry Point
-// -------------------------------------------------------------
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
-    g_hInst = hInstance;
+// WinMain
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nCmdShow) {
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES };
     InitCommonControlsEx(&icc);
-    DialogBox(hInstance, MAKEINTRESOURCE(NULL), nullptr, DlgProc);
-    // Actually we need a dialog template. But we can create via CreateDialog, easier: create window manually.
-    // Alternative: use CreateDialog with a resource. But to keep single file, we'll create a main window directly.
-    // We'll simulate a dialog by creating a window with class.
-    // Simpler: register window class and create main window. But above DlgProc expects dialog resource.
-    // Let's fix: Instead of DialogBox, create a window and set DlgProc as its procedure.
     WNDCLASS wc = {};
     wc.lpfnWndProc = DlgProc;
-    wc.hInstance = hInstance;
+    wc.hInstance = hInst;
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
     wc.lpszClassName = "AutoClickerClass";
     RegisterClass(&wc);
     HWND hWnd = CreateWindowEx(0, "AutoClickerClass", "AutoClicker Pro", WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
-                               CW_USEDEFAULT, CW_USEDEFAULT, 450, 480, nullptr, nullptr, hInstance, nullptr);
+                               CW_USEDEFAULT, CW_USEDEFAULT, 450, 480, nullptr, nullptr, hInst, nullptr);
     if (!hWnd) return 1;
     ShowWindow(hWnd, nCmdShow);
     MSG msg;
