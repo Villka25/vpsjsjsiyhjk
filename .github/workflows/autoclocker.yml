@@ -1,4 +1,4 @@
-name: Build AutoClicker (Single File)
+name: Build with MinGW
 
 on: [push, workflow_dispatch]
 
@@ -7,11 +7,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile with MSVC
+      - name: Install MinGW
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+      - name: Compile
+        shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          cl main.cpp /O2 /MT /FeAutoClicker.exe user32.lib comctl32.lib gdi32.lib shell32.lib
+          g++ main.cpp -O2 -mwindows -static -o AutoClicker.exe -lcomctl32 -lgdi32
       - uses: actions/upload-artifact@v4
         with:
-          name: AutoClicker.exe
+          name: AutoClicker-MinGW
           path: AutoClicker.exe
