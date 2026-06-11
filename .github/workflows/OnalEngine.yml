@@ -1,0 +1,117 @@
+name: Build Ebanytai Engine (v2.1)
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  ENGINE_SRC: ebanytai.cpp
+  ENGINE_BIN: ebanytai
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact-name: ebanytai-linux
+            bin-suffix: ''
+          - os: windows-latest
+            artifact-name: ebanytai-windows
+            bin-suffix: '.exe'
+          - os: macos-latest
+            artifact-name: ebanytai-macos
+            bin-suffix: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Установка зависимостей (под ОС) ──────────────────
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libgl1-mesa-dev
+
+      - name: Setup MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-mesa
+            mingw-w64-x86_64-pkg-config
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+
+      # ── Компиляция ────────────────────────────────────────
+      - name: Verify source
+        run: test -f ${{ env.ENGINE_SRC }} || { echo "ERROR: ${{ env.ENGINE_SRC }} not found"; exit 1; }
+        shell: bash
+
+      - name: Compile (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          g++ ${{ env.ENGINE_SRC }} -o ${{ env.ENGINE_BIN }} $(sdl2-config --cflags --libs) -lGL -ldl
+          strip ${{ env.ENGINE_BIN }}
+        shell: bash
+
+      - name: Compile (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          g++ ${{ env.ENGINE_SRC }} -o ${{ env.ENGINE_BIN }}.exe $(pkg-config --cflags --libs sdl2) -lopengl32
+          echo "No strip on Windows"
+
+      - name: Compile (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          g++ ${{ env.ENGINE_SRC }} -o ${{ env.ENGINE_BIN }} $(sdl2-config --cflags --libs) -framework OpenGL -framework Cocoa -framework IOKit
+          strip ${{ env.ENGINE_BIN }} || true
+        shell: bash
+
+      # ── Артефакты ─────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ env.ENGINE_BIN }}${{ matrix.bin-suffix }}
+
+  # ── Релиз (только для тегов v*) ─────────────────────────
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archive
+        run: |
+          mkdir release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release && zip -r ../ebanytai-${{ github.ref_name }}-all.zip .
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ebanytai-${{ github.ref_name }}-all.zip
+          name: Ebanytai Engine ${{ github.ref_name }}
+          body: |
+            Автоматическая кроссплатформенная сборка.
+            Поддерживаются Linux, Windows, macOS.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
