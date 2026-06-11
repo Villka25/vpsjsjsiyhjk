@@ -1,6 +1,7 @@
-name: Build Ebanytai Engine (v2.1)
+name: Build Ebanytai Engine (v2.2)
 
 on:
+  workflow_dispatch:          # Ручной запуск из интерфейса Actions
   push:
     branches: [ main ]
     tags: [ 'v*' ]
@@ -33,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Установка зависимостей (под ОС) ──────────────────
+      # ── Установка зависимостей ──────────────────────────
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -56,7 +57,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install sdl2
 
-      # ── Компиляция ────────────────────────────────────────
+      # ── Компиляция ───────────────────────────────────────
       - name: Verify source
         run: test -f ${{ env.ENGINE_SRC }} || { echo "ERROR: ${{ env.ENGINE_SRC }} not found"; exit 1; }
         shell: bash
@@ -82,14 +83,14 @@ jobs:
           strip ${{ env.ENGINE_BIN }} || true
         shell: bash
 
-      # ── Артефакты ─────────────────────────────────────────
+      # ── Артефакты ────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ env.ENGINE_BIN }}${{ matrix.bin-suffix }}
 
-  # ── Релиз (только для тегов v*) ─────────────────────────
+  # ── Релиз (только для тегов v*) ────────────────────────
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
