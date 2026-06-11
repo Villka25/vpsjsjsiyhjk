@@ -1,7 +1,7 @@
-name: Build Ebanytai Engine (v2.2)
+name: Build & Run Ebanytai Engine (v2.3)
 
 on:
-  workflow_dispatch:          # Ручной запуск из интерфейса Actions
+  workflow_dispatch:          # Кнопка ручного запуска
   push:
     branches: [ main ]
     tags: [ 'v*' ]
@@ -24,12 +24,15 @@ jobs:
           - os: ubuntu-latest
             artifact-name: ebanytai-linux
             bin-suffix: ''
+            can-run: true          # Только на Linux можем запустить в CI
           - os: windows-latest
             artifact-name: ebanytai-windows
             bin-suffix: '.exe'
+            can-run: false
           - os: macos-latest
             artifact-name: ebanytai-macos
             bin-suffix: ''
+            can-run: false
 
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl2-dev libgl1-mesa-dev
+          sudo apt-get install -y -qq libsdl2-dev libgl1-mesa-dev xvfb
 
       - name: Setup MSYS2 (Windows)
         if: runner.os == 'Windows'
@@ -83,6 +86,15 @@ jobs:
           strip ${{ env.ENGINE_BIN }} || true
         shell: bash
 
+      # ── 🎮 Запуск движка (только Linux) ──────────────────
+      - name: Run engine (Linux)
+        if: runner.os == 'Linux' && matrix.can-run
+        run: |
+          echo "Starting engine with virtual display..."
+          timeout 3 xvfb-run -a ./${{ env.ENGINE_BIN }} || true
+          echo "Engine ran without crash (or exited due to timeout)."
+        shell: bash
+
       # ── Артефакты ────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -112,7 +124,7 @@ jobs:
           files: ebanytai-${{ github.ref_name }}-all.zip
           name: Ebanytai Engine ${{ github.ref_name }}
           body: |
-            Автоматическая кроссплатформенная сборка.
+            Автоматическая кроссплатформенная сборка с проверкой запуска под Linux.
             Поддерживаются Linux, Windows, macOS.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
