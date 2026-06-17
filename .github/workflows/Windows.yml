@@ -1,50 +1,55 @@
-name: Windows + Cloudflare + noVNC
+name: Windows + noVNC + Cloudflare
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-    - name: Включаем RDP
-      run: |
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      - name: Включить RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: Устанавливаем Python (для noVNC)
-      run: |
-        choco install python --version=3.11.0 -y
-        [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Python311;C:\Python311\Scripts", "Machine")
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine")
-        python -m pip install --upgrade pip
+      - name: Установить Python
+        run: |
+          choco install python --version=3.11.0 -y
+          [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Python311;C:\Python311\Scripts", "Machine")
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine")
+          python -m pip install --upgrade pip
 
-    - name: Устанавливаем websockify и noVNC
-      run: |
-        pip install websockify
-        git clone https://github.com/novnc/noVNC.git C:\novnc
-        git clone https://github.com/novnc/websockify C:\websockify
+      - name: Установить websockify и noVNC
+        run: |
+          pip install websockify
+          git clone https://github.com/novnc/noVNC.git C:\novnc
+          git clone https://github.com/novnc/websockify C:\websockify
 
-    - name: Запускаем noVNC (прокси RDP на порт 8080)
-      run: |
-        Start-Process -NoNewWindow -FilePath "python" -ArgumentList "C:\websockify\websockify\websockify.py", "--web", "C:\novnc", "8080", "127.0.0.1:3389"
+      - name: Запустить websockify (прокси RDP -> HTTP)
+        run: |
+          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "C:\websockify\websockify\websockify.py", "--web", "C:\novnc", "6080", "127.0.0.1:3389"
+          # Даём время на запуск
+          Start-Sleep -Seconds 5
+          # Проверяем, что процесс висит
+          Get-Process -Name python
 
-    - name: Скачиваем cloudflared
-      run: |
-        curl -L -o cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+      - name: Скачать cloudflared
+        run: |
+          curl -L -o cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
 
-    - name: Запускаем туннель Cloudflare на порт 8080
-      run: |
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080"
-        Write-Host "⏳ Ожидаем поднятия туннеля..."
-        Start-Sleep -Seconds 15
-        Write-Host "=================================================="
-        Write-Host "✅ Ссылка для подключения будет в логах выше (ищите https://....trycloudflare.com)"
-        Write-Host "🔑 Логин: runneradmin"
-        Write-Host "🔑 Пароль: P@ssw0rd!"
-        Write-Host "=================================================="
+      - name: Запустить туннель Cloudflare
+        run: |
+          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080"
+          Write-Host "⏳ Ожидаем туннель..."
+          Start-Sleep -Seconds 10
+          Write-Host "============================================="
+          Write-Host "✅ Ссылка будет в логах выше (ищите https://....trycloudflare.com)"
+          Write-Host "🔑 Пароль VNC (если спросит): MySecret123"
+          Write-Host "🔑 Логин Windows: runneradmin"
+          Write-Host "🔑 Пароль Windows: P@ssw0rd!"
+          Write-Host "============================================="
 
-    - name: Держим сессию живой
-      run: |
-        while ($true) {
-          Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
-          Start-Sleep -Seconds 60
-        }
+      - name: Держать сессию живой
+        run: |
+          while ($true) {
+            Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
+            Start-Sleep -Seconds 60
+          }
