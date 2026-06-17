@@ -1,66 +1,50 @@
-name: Ubuntu Desktop (noVNC via Cloudflare Tunnel)
-
-on:
-  workflow_dispatch:
+name: Windows + Cloudflare + noVNC
+on: workflow_dispatch
 
 jobs:
-  desktop:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: windows-latest
     steps:
-      # 1. Устанавливаем графическое окружение и VNC-сервер
-      - name: Install desktop and VNC
-        run: |
-          sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
+    - name: Включаем RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      # 2. Устанавливаем noVNC (веб-клиент VNC)
-      - name: Install noVNC
-        run: |
-          sudo apt install -y novnc
+    - name: Устанавливаем Python (для noVNC)
+      run: |
+        choco install python --version=3.11.0 -y
+        [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Python311;C:\Python311\Scripts", "Machine")
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine")
+        python -m pip install --upgrade pip
 
-      # 3. Устанавливаем cloudflared (Cloudflare Tunnel)
-      - name: Install cloudflared
-        run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          rm cloudflared-linux-amd64.deb
+    - name: Устанавливаем websockify и noVNC
+      run: |
+        pip install websockify
+        git clone https://github.com/novnc/noVNC.git C:\novnc
+        git clone https://github.com/novnc/websockify C:\websockify
 
-      # 4. Настраиваем пароль VNC и запускаем TigerVNC
-      - name: Setup VNC password and start VNC server
-        run: |
-          mkdir -p ~/.vnc
-          echo "secret" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          cat > ~/.vnc/xstartup << 'EOF'
-          #!/bin/sh
-          unset SESSION_MANAGER
-          unset DBUS_SESSION_BUS_ADDRESS
-          exec startxfce4
-          EOF
-          chmod +x ~/.vnc/xstartup
-          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
-          sleep 3
+    - name: Запускаем noVNC (прокси RDP на порт 8080)
+      run: |
+        Start-Process -NoNewWindow -FilePath "python" -ArgumentList "C:\websockify\websockify\websockify.py", "--web", "C:\novnc", "8080", "127.0.0.1:3389"
 
-      # 5. Запускаем noVNC, который слушает порт 6080 и подключается к VNC на порту 5901
-      - name: Start noVNC
-        run: |
-          # noVNC будет доступен на http://localhost:6080/vnc.html?host=localhost&port=5901
-          websockify --web=/usr/share/novnc 6080 localhost:5901 &
-          sleep 3
+    - name: Скачиваем cloudflared
+      run: |
+        curl -L -o cloudflared.exe https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
 
-      # 6. Пробрасываем порт 6080 через Cloudflare Tunnel (HTTPS)
-      - name: Expose noVNC via Cloudflare Tunnel
-        run: |
-          cloudflared tunnel --url http://localhost:6080 &
-          sleep 10
-          echo "============================================="
-          echo "Desktop is ready!"
-          echo "Look in the logs above for a line like:"
-          echo "  https://<random-name>.trycloudflare.com"
-          echo "Open that URL in your browser."
-          echo "VNC Password: secret"
-          echo "============================================="
+    - name: Запускаем туннель Cloudflare на порт 8080
+      run: |
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080"
+        Write-Host "⏳ Ожидаем поднятия туннеля..."
+        Start-Sleep -Seconds 15
+        Write-Host "=================================================="
+        Write-Host "✅ Ссылка для подключения будет в логах выше (ищите https://....trycloudflare.com)"
+        Write-Host "🔑 Логин: runneradmin"
+        Write-Host "🔑 Пароль: P@ssw0rd!"
+        Write-Host "=================================================="
 
-      # 7. Держим сессию живой до 6 часов
-      - name: Keep runner alive
-        run: sleep 6h
+    - name: Держим сессию живой
+      run: |
+        while ($true) {
+          Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
+          Start-Sleep -Seconds 60
+        }
