@@ -1,75 +1,143 @@
-name: Windows RDP + noVNC
+name: ULTIMATE SPEED MODE
 
 on:
   workflow_dispatch:
+    inputs:
+      game_exe:
+        description: 'Имя исполняемого файла (например, MyGame.x86_64)'
+        required: true
+        default: 'MyGame.x86_64'
+      is_windows:
+        description: 'Это Windows-сборка? (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
-  rdp:
-    runs-on: windows-latest
+  ultra_speed:
+    # Максимальный CPU-раннер
+    runs-on: ubuntu-latest-16-cores
+    # Если нет 16-ядерного, используем 8-ядерный
+    # runs-on: ubuntu-latest-8-cores
+
     steps:
-      # 1. Включаем RDP и устанавливаем пароль
-      - name: Enable RDP and set password
-        shell: pwsh
+      # 1. Установка всего необходимого для работы и оптимизации
+      - name: Install system packages and optimize OS
         run: |
-          # Включаем RDP в реестре
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-          # Разрешаем RDP в фаерволе
-          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
-          # Устанавливаем пароль для текущего пользователя (runneradmin)
-          $password = ConvertTo-SecureString "secret" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
-          Write-Host "RDP enabled, password set to 'secret'"
+          sudo apt update
+          sudo apt install -y \
+            wget unzip \
+            xvfb \
+            mesa-utils \
+            libgl1-mesa-dri \
+            libgl1-mesa-glx \
+            libglu1-mesa \
+            libxrandr2 \
+            libxinerama1 \
+            libxcursor1 \
+            libxi6 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxext6 \
+            libxrender1 \
+            libxtst6 \
+            libdbus-glib-1-2 \
+            libgtk-3-0 \
+            libnss3 \
+            libasound2
 
-      # 2. Устанавливаем Python и websockify
-      - name: Install Python and websockify
-        shell: pwsh
+      # 2. Оптимизация CPU (режим производительности)
+      - name: Set CPU governor to performance
         run: |
-          if (!(Get-Command python -ErrorAction SilentlyContinue)) {
-            choco install python --yes
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          }
-          python -m pip install --upgrade pip
-          python -m pip install websockify
-          Write-Host "websockify installed"
+          sudo apt install -y linux-tools-common linux-tools-$(uname -r) || true
+          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
+          echo "✅ CPU governor set to performance"
 
-      # 3. Клонируем noVNC
-      - name: Clone noVNC
-        shell: pwsh
+      # 3. Отключение ненужных сервисов для освобождения ресурсов
+      - name: Disable unnecessary services
         run: |
-          git clone --depth 1 https://github.com/novnc/noVNC.git C:\noVNC
-          Write-Host "noVNC cloned"
+          sudo systemctl stop unattended-upgrades || true
+          sudo systemctl disable unattended-upgrades || true
+          sudo systemctl stop snapd || true
+          sudo systemctl disable snapd || true
+          sudo systemctl stop systemd-resolved || true
+          sudo systemctl stop systemd-timesyncd || true
+          echo "✅ Unnecessary services disabled"
 
-      # 4. Запускаем websockify для проброса RDP (3389 -> 8080)
-      - name: Start websockify
-        shell: pwsh
+      # 4. Создание RAM-диска для временных файлов (ускорение I/O)
+      - name: Create RAM disk for temporary files
         run: |
-          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 8080 localhost:3389"
-          Start-Sleep -Seconds 3
-          Write-Host "websockify running on port 8080"
+          sudo mkdir -p /mnt/ramdisk
+          sudo mount -t tmpfs -o size=4G tmpfs /mnt/ramdisk
+          echo "✅ RAM disk mounted at /mnt/ramdisk"
 
-      # 5. Устанавливаем cloudflared
-      - name: Install cloudflared
-        shell: pwsh
+      # 5. Скачивание и распаковка игры
+      - name: Download and extract game
         run: |
-          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $url -OutFile "C:\cloudflared.exe"
-          Write-Host "cloudflared installed"
+          mkdir -p /mnt/ramdisk/game
+          cd /mnt/ramdisk/game
+          # Замените URL на вашу ссылку
+          wget -O game.zip "https://files.catbox.moe/ваш_файл.zip"
+          unzip -q game.zip
+          rm game.zip
+          echo "✅ Game extracted to /mnt/ramdisk/game"
 
-      # 6. Пробрасываем порт 8080 через Cloudflare
-      - name: Expose via Cloudflare
-        shell: pwsh
+      # 6. Настройка прав и переменных для графики
+      - name: Setup graphics environment
         run: |
-          Start-Process -NoNewWindow -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080 --protocol http2"
-          Start-Sleep -Seconds 10
-          Write-Host "============================================================"
-          Write-Host "Cloudflare Tunnel is running."
-          Write-Host "Look for a URL like: https://random-name.trycloudflare.com"
-          Write-Host "Open in browser: https://random-name.trycloudflare.com/vnc.html"
-          Write-Host "VNC password is NOT used for RDP; noVNC will show RDP login."
-          Write-Host "Use: username = runneradmin, password = secret"
-          Write-Host "============================================================"
+          export DISPLAY=:99
+          export SDL_VIDEO_X11_WMCLASS="Game"
+          export SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR=0
+          echo "export DISPLAY=:99" >> ~/.bashrc
 
-      # 7. Держим раннер активным
+      # 7. Запуск Xvfb (виртуальный X-сервер) для работы графики
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 640x480x24 -ac -nolisten tcp -extension GLX +extension RANDR &
+          sleep 3
+          echo "✅ Xvfb started on :99"
+
+      # 8. Запуск игры с максимальной оптимизацией
+      - name: Launch game with ultra settings
+        run: |
+          cd /mnt/ramdisk/game
+          chmod +x ${{ github.event.inputs.game_exe }}
+          if [ "${{ github.event.inputs.is_windows }}" == "true" ]; then
+            # Windows-сборка через Wine (без DXVK, т.к. он может не работать)
+            sudo apt install -y wine64 wine32
+            # Запуск с минимальным разрешением, программный рендеринг
+            wine ${{ github.event.inputs.game_exe }} \
+              -force-software-rendering \
+              -screen-width 320 \
+              -screen-height 240 \
+              -windowed \
+              -v-sync Off \
+              -fps 30 \
+              -quality-level 0 \
+              -shadow-quality 0 \
+              -texture-quality 0
+          else
+            # Нативная Linux-сборка
+            ./${{ github.event.inputs.game_exe }} \
+              -force-software-rendering \
+              -screen-width 320 \
+              -screen-height 240 \
+              -windowed \
+              -v-sync Off \
+              -fps 30 \
+              -quality-level 0 \
+              -shadow-quality 0 \
+              -texture-quality 0
+          fi
+
+      # 9. Если игра не требует графики (тест логики) — используйте этот шаг вместо предыдущего
+      # - name: Launch in headless mode (no graphics)
+      #   run: |
+      #     cd /mnt/ramdisk/game
+      #     ./${{ github.event.inputs.game_exe }} -batchmode -nographics
+
+      # 10. Keep runner alive (для отладки или удалённого доступа)
       - name: Keep runner alive
-        shell: pwsh
-        run: Start-Sleep -Seconds 21600
+        run: |
+          echo "✅ Game is running. If you want to debug, connect via VNC or SSH."
+          sleep 6h
