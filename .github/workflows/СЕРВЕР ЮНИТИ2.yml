@@ -1,10 +1,10 @@
-name: Windows noVNC (no Linux)
+name: Windows noVNC via Cloudflare
 
 on:
   workflow_dispatch:
     inputs:
       archive_url:
-        description: 'Ссылка на ZIP-архив с игрой (catbox.moe или другой)'
+        description: 'Ссылка на ZIP-архив с игрой'
         required: true
         default: 'https://files.catbox.moe/51xx79.zip'
 
@@ -29,12 +29,9 @@ jobs:
         run: |
           $tvnUrl = "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi"
           $msiPath = "$env:TEMP\tightvnc.msi"
-          Write-Host "📥 Downloading TightVNC"
           Invoke-WebRequest -Uri $tvnUrl -OutFile $msiPath
-          Write-Host "📦 Installing TightVNC silently"
           Start-Process msiexec -ArgumentList "/i `"$msiPath`" /quiet /qn /norestart" -Wait
           Remove-Item $msiPath
-          # Добавляем путь в PATH для удобства
           $env:Path += ";C:\Program Files\TightVNC"
           [Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")
           Write-Host "✅ TightVNC installed"
@@ -42,10 +39,6 @@ jobs:
       - name: Setup VNC password
         shell: pwsh
         run: |
-          # Устанавливаем пароль "secret"
-          # TightVNC использует реестр для хранения пароля (зашифровано)
-          # Создаем ключ и записываем пароль в зашифрованном виде
-          # Проще использовать команду tvnserver.exe -controlapp -setpassword
           & "C:\Program Files\TightVNC\tvnserver.exe" -controlapp -setpassword secret
           Write-Host "✅ VNC password set to 'secret'"
 
@@ -59,13 +52,8 @@ jobs:
       - name: Install Python and websockify
         shell: pwsh
         run: |
-          # Проверяем, есть ли Python
-          if (Get-Command python -ErrorAction SilentlyContinue) {
-            Write-Host "✅ Python already installed"
-          } else {
-            Write-Host "📥 Installing Python via Chocolatey"
+          if (!(Get-Command python -ErrorAction SilentlyContinue)) {
             choco install python --yes
-            # Добавляем Python в PATH для текущей сессии
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           }
           python -m pip install --upgrade pip
@@ -85,30 +73,26 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "✅ websockify running on port 8080"
 
-      - name: Install bore (TCP tunnel)
+      - name: Install cloudflared
         shell: pwsh
         run: |
-          $boreUrl = "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip"
-          $zipPath = "$env:TEMP\bore.zip"
-          Write-Host "📥 Downloading bore"
-          Invoke-WebRequest -Uri $boreUrl -OutFile $zipPath
-          Expand-Archive -Path $zipPath -DestinationPath "C:\bore"
-          Remove-Item $zipPath
-          Write-Host "✅ bore installed to C:\bore"
+          $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $cfUrl -OutFile "C:\cloudflared.exe"
+          Write-Host "✅ cloudflared installed"
 
-      - name: Expose port 8080 via bore
+      - name: Expose noVNC via Cloudflare Tunnel
         shell: pwsh
         run: |
-          Start-Process -NoNewWindow -FilePath "C:\bore\bore.exe" -ArgumentList "local 8080 --to bore.pub"
-          Start-Sleep -Seconds 5
+          Start-Process -NoNewWindow -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080"
+          Start-Sleep -Seconds 10
           Write-Host "============================================================"
-          Write-Host "✅ bore tunnel is running"
+          Write-Host "✅ Cloudflare Tunnel is running"
           Write-Host ""
-          Write-Host "🌐 Look in the logs above for the line:"
-          Write-Host "   listening on bore.pub:XXXXX"
+          Write-Host "🌐 Look in the logs above for a line like:"
+          Write-Host "   https://random-name.trycloudflare.com"
           Write-Host ""
           Write-Host "   Then open in your browser:"
-          Write-Host "   http://bore.pub:XXXXX/vnc.html?password=secret"
+          Write-Host "   https://random-name.trycloudflare.com/vnc.html?password=secret"
           Write-Host ""
           Write-Host "🔑 VNC password: secret"
           Write-Host "📍 Your game files are in C:\game"
