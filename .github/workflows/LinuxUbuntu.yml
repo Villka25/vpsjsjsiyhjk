@@ -1,37 +1,25 @@
-name: Unity 6000 LTS + Wine + Project Setup
+name: Wine + Project Files (no Unity)
 
 on:
   workflow_dispatch:
     inputs:
-      project_url:
-        description: 'Ссылка на архив проекта (catbox.moe)'
+      archive_url:
+        description: 'Ссылка на архив с файлами (catbox.moe)'
         required: true
         default: 'https://files.catbox.moe/51xx79.zip'
-      archive_type:
-        description: 'Тип архива (zip, rar, 7z)'
-        required: true
-        default: 'zip'
-      unity_version:
-        description: 'Версия Unity 6000 (например 6000.0.70f1)'
-        required: false
-        default: '6000.0.70f1'
-      unity_changeset:
-        description: 'Changeset для версии Unity'
-        required: false
-        default: '0d9e1a373c8b'
 
 jobs:
-  build:
+  setup:
     runs-on: ubuntu-latest
     steps:
-      # 1. Базовая подготовка системы
       - name: Install system dependencies
         run: |
           sudo apt update
           sudo apt install -y wget unzip p7zip-full unrar git
-          sudo apt install -y libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev libxi-dev libgl1-mesa-dev libdbus-glib-1-2 libgtk-3-0 libnss3 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrender1 libxtst6
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-pip
+          pip3 install websockify
 
-      # 2. Установка Wine (для запуска .exe)
+      # Установка Wine
       - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386
@@ -39,53 +27,21 @@ jobs:
           sudo apt install -y wine64 wine32
           wine --version
 
-      # 3. Установка Unity Hub
-      - name: Install Unity Hub
-        run: |
-          wget -qO - https://hub.unity3d.com/linux/keys/public | sudo gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
-          sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" > /etc/apt/sources.list.d/unityhub.list'
-          sudo apt update
-          sudo apt install -y unityhub
-
-      # 4. Установка Unity 6000 LTS
-      - name: Install Unity ${{ github.event.inputs.unity_version }}
-        run: |
-          unityhub --headless install --version ${{ github.event.inputs.unity_version }} --changeset ${{ github.event.inputs.unity_changeset }}
-          echo "✅ Unity ${{ github.event.inputs.unity_version }} установлен"
-
-      # 5. Скачивание и распаковка архива проекта
+      # Скачивание и распаковка архива
       - name: Download and extract project
         run: |
-          mkdir -p ~/UnityProject
-          cd ~/UnityProject
-          case "${{ github.event.inputs.archive_type }}" in
-            zip)
-              wget -O project.zip "${{ github.event.inputs.project_url }}"
-              unzip project.zip
-              rm project.zip
-              ;;
-            rar)
-              wget -O project.rar "${{ github.event.inputs.project_url }}"
-              unrar x project.rar
-              rm project.rar
-              ;;
-            7z)
-              wget -O project.7z "${{ github.event.inputs.project_url }}"
-              7z x project.7z -o.
-              rm project.7z
-              ;;
-            *)
-              echo "❌ Неподдерживаемый тип архива"
-              exit 1
-              ;;
-          esac
-          echo "✅ Проект распакован в ~/UnityProject"
+          mkdir -p ~/Project
+          cd ~/Project
+          wget -O archive.zip "${{ github.event.inputs.archive_url }}"
+          unzip archive.zip
+          rm archive.zip
+          echo "✅ Файлы распакованы в ~/Project"
 
-      # 6. Поиск .exe файлов и создание ярлыков для запуска через Wine
-      - name: Find and create shortcuts for .exe files
+      # Создание ярлыков для всех .exe
+      - name: Create shortcuts for .exe files
         run: |
           mkdir -p ~/Desktop
-          find ~/UnityProject -type f -name "*.exe" | while read exe; do
+          find ~/Project -type f -name "*.exe" | while read exe; do
             name=$(basename "$exe")
             cat > ~/Desktop/"$name.desktop" << EOF
           [Desktop Entry]
@@ -96,31 +52,12 @@ jobs:
           Terminal=false
           EOF
             chmod +x ~/Desktop/"$name.desktop"
-            echo "✅ Ярлык создан для $name"
           done
+          ln -s ~/Project ~/Desktop/Project
 
-      # 7. Настройка переменных окружения и ярлыка для Unity
-      - name: Setup environment and desktop shortcuts
-        run: |
-          echo "export UNITY_PATH=~/Unity/Hub/Editor/${{ github.event.inputs.unity_version }}/Editor/Unity" >> ~/.bashrc
-          echo "export PROJECT_PATH=~/UnityProject" >> ~/.bashrc
-          ln -s ~/UnityProject ~/Desktop/UnityProject
-          cat > ~/Desktop/open_project.desktop << EOF
-          [Desktop Entry]
-          Type=Application
-          Name=Open Unity Project
-          Exec=~/Unity/Hub/Editor/${{ github.event.inputs.unity_version }}/Editor/Unity -projectPath ~/UnityProject
-          Icon=unity
-          Terminal=false
-          EOF
-          chmod +x ~/Desktop/open_project.desktop
-          echo "✅ Ярлыки для Unity и проекта созданы"
-
-      # 8. Установка noVNC и запуск VNC + Cloudflare Tunnel
+      # noVNC + Cloudflare Tunnel
       - name: Install noVNC and Cloudflare
         run: |
-          sudo apt install -y python3-pip
-          pip3 install websockify
           git clone https://github.com/novnc/noVNC.git ~/noVNC
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
@@ -128,7 +65,6 @@ jobs:
 
       - name: Start VNC server
         run: |
-          sudo apt install -y tigervnc-standalone-server xfce4 xfce4-goodies
           mkdir -p ~/.vnc
           echo "secret" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
@@ -160,10 +96,9 @@ jobs:
               echo "🌐 Open in your browser:"
               echo "   $URL/vnc.html?password=secret"
               echo ""
-              echo "🔑 VNC password: secret"
-              echo "📍 Project path: ~/UnityProject"
-              echo "📍 Unity version: ${{ github.event.inputs.unity_version }}"
-              echo "📍 Wine: installed, .exe shortcuts on Desktop"
+              echo "🔑 Password: secret"
+              echo "📍 Your files: ~/Project (Desktop shortcut 'Project')"
+              echo "   .exe shortcuts are on the Desktop"
               echo "============================================================"
               break
             fi
