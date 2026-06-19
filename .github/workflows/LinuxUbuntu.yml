@@ -7,11 +7,10 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install desktop, VNC, noVNC and cloudflared
+      - name: Install desktop, VNC, noVNC, cloudflared
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server
-          sudo apt install -y git python3 python3-pip
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server git python3 python3-pip
           pip3 install websockify
           git clone https://github.com/novnc/noVNC.git ~/noVNC
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
@@ -41,21 +40,28 @@ jobs:
           websockify --web ~/noVNC 8080 localhost:5901 &
           sleep 3
 
-      - name: Expose noVNC via Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel and wait for URL
         run: |
-          cloudflared tunnel --url http://localhost:8080 &
-          sleep 10
-          echo "============================================================"
-          echo "✅ Cloudflare Tunnel is running."
-          echo ""
-          echo "🌐 Open this URL in your browser:"
-          echo "   (Look for the line with 'trycloudflare.com' in the logs above)"
-          echo ""
-          echo "   Example: https://random-name.trycloudflare.com"
-          echo ""
-          echo "   Then add /vnc.html?password=secret to the URL, e.g.:"
-          echo "   https://random-name.trycloudflare.com/vnc.html?password=secret"
-          echo ""
-          echo "🔑 VNC password: secret"
-          echo "============================================================"
+          cloudflared tunnel --url http://localhost:8080 --protocol http2 2>&1 | tee /tmp/cf.log &
+          sleep 5
+          for i in {1..30}; do
+            URL=$(grep -o 'https://[a-zA-Z0-9\-]*\.trycloudflare\.com' /tmp/cf.log | head -1)
+            if [ -n "$URL" ]; then
+              echo "============================================================"
+              echo "✅ Cloudflare Tunnel is ready!"
+              echo ""
+              echo "🌐 Open in your browser:"
+              echo "   $URL/vnc.html?password=secret"
+              echo ""
+              echo "🔑 Password: secret"
+              echo "============================================================"
+              break
+            fi
+            echo "Waiting for tunnel (attempt $i)..."
+            sleep 2
+          done
+          if [ -z "$URL" ]; then
+            echo "❌ Failed to get tunnel URL. Check logs above."
+            exit 1
+          fi
           sleep 6h
