@@ -1,72 +1,121 @@
-name: Windows Desktop (noVNC + Cloudflare Tunnel + Data Persistence)
+name: Windows noVNC (no Linux)
 
 on:
   workflow_dispatch:
+    inputs:
+      archive_url:
+        description: 'Ссылка на ZIP-архив с игрой (catbox.moe или другой)'
+        required: true
+        default: 'https://files.catbox.moe/51xx79.zip'
 
 jobs:
-  desktop:
+  windows_vnc:
     runs-on: windows-latest
     steps:
-      - name: Check Python
-        shell: powershell
-        run: python --version
-
-      # Устанавливаем TightVNC Server
-      - name: Install TightVNC Server
-        shell: powershell
+      - name: Download and extract archive
+        shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile tightvnc.msi
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart ADDLOCAL="Server"'
-          & "C:\Program Files\TightVNC\tvnserver.exe" -controlservice -password "MySecret123"
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
+          $url = "${{ github.event.inputs.archive_url }}"
+          $zipPath = "$env:TEMP\game.zip"
+          Write-Host "📥 Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Write-Host "📂 Extracting to C:\game"
+          Expand-Archive -Path $zipPath -DestinationPath "C:\game"
+          Remove-Item $zipPath
+          Write-Host "✅ Game extracted to C:\game"
 
-      # Клонируем noVNC и устанавливаем websockify через pip
-      - name: Setup noVNC and websockify
-        shell: powershell
+      - name: Install TightVNC (portable)
+        shell: pwsh
         run: |
-          git clone https://github.com/novnc/noVNC.git
-          pip install websockify
+          $tvnUrl = "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi"
+          $msiPath = "$env:TEMP\tightvnc.msi"
+          Write-Host "📥 Downloading TightVNC"
+          Invoke-WebRequest -Uri $tvnUrl -OutFile $msiPath
+          Write-Host "📦 Installing TightVNC silently"
+          Start-Process msiexec -ArgumentList "/i `"$msiPath`" /quiet /qn /norestart" -Wait
+          Remove-Item $msiPath
+          # Добавляем путь в PATH для удобства
+          $env:Path += ";C:\Program Files\TightVNC"
+          [Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")
+          Write-Host "✅ TightVNC installed"
 
-      # Запускаем websockify, отдающий веб-интерфейс noVNC на порту 6080 и подключающийся к VNC на 5900
-      - name: Start websockify (VNC → WebSocket)
-        shell: powershell
+      - name: Setup VNC password
+        shell: pwsh
         run: |
-          Start-Process -NoNewWindow -FilePath "websockify" -ArgumentList "--web=./noVNC 6080 localhost:5900" -PassThru
+          # Устанавливаем пароль "secret"
+          # TightVNC использует реестр для хранения пароля (зашифровано)
+          # Создаем ключ и записываем пароль в зашифрованном виде
+          # Проще использовать команду tvnserver.exe -controlapp -setpassword
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlapp -setpassword secret
+          Write-Host "✅ VNC password set to 'secret'"
+
+      - name: Start VNC server
+        shell: pwsh
+        run: |
+          & "C:\Program Files\TightVNC\tvnserver.exe" -controlapp -start
           Start-Sleep -Seconds 3
+          Write-Host "✅ VNC server started on port 5900"
 
-      # Устанавливаем cloudflared и создаём туннель до порта 6080
-      - name: Install and run Cloudflare Tunnel
-        shell: powershell
+      - name: Install Python and websockify
+        shell: pwsh
         run: |
-          $exeUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $exeUrl -OutFile "cloudflared.exe"
-          Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080" -PassThru
-          Start-Sleep -Seconds 15
-          Write-Host "============================================="
-          Write-Host "Desktop is ready!"
-          Write-Host "Look in the logs above for a line like:"
-          Write-Host "  https://<random-name>.trycloudflare.com"
-          Write-Host "Open that URL in your browser."
-          Write-Host "Then click 'Connect' and enter password: MySecret123"
-          Write-Host "============================================="
+          # Проверяем, есть ли Python
+          if (Get-Command python -ErrorAction SilentlyContinue) {
+            Write-Host "✅ Python already installed"
+          } else {
+            Write-Host "📥 Installing Python via Chocolatey"
+            choco install python --yes
+            # Добавляем Python в PATH для текущей сессии
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          }
+          python -m pip install --upgrade pip
+          python -m pip install websockify
+          Write-Host "✅ websockify installed"
 
-      # Держим сессию живой до 6 часов
+      - name: Clone noVNC
+        shell: pwsh
+        run: |
+          git clone https://github.com/novnc/noVNC.git C:\noVNC
+          Write-Host "✅ noVNC cloned to C:\noVNC"
+
+      - name: Start websockify (noVNC)
+        shell: pwsh
+        run: |
+          Start-Process -NoNewWindow -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 8080 localhost:5900"
+          Start-Sleep -Seconds 3
+          Write-Host "✅ websockify running on port 8080"
+
+      - name: Install bore (TCP tunnel)
+        shell: pwsh
+        run: |
+          $boreUrl = "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip"
+          $zipPath = "$env:TEMP\bore.zip"
+          Write-Host "📥 Downloading bore"
+          Invoke-WebRequest -Uri $boreUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath "C:\bore"
+          Remove-Item $zipPath
+          Write-Host "✅ bore installed to C:\bore"
+
+      - name: Expose port 8080 via bore
+        shell: pwsh
+        run: |
+          Start-Process -NoNewWindow -FilePath "C:\bore\bore.exe" -ArgumentList "local 8080 --to bore.pub"
+          Start-Sleep -Seconds 5
+          Write-Host "============================================================"
+          Write-Host "✅ bore tunnel is running"
+          Write-Host ""
+          Write-Host "🌐 Look in the logs above for the line:"
+          Write-Host "   listening on bore.pub:XXXXX"
+          Write-Host ""
+          Write-Host "   Then open in your browser:"
+          Write-Host "   http://bore.pub:XXXXX/vnc.html?password=secret"
+          Write-Host ""
+          Write-Host "🔑 VNC password: secret"
+          Write-Host "📍 Your game files are in C:\game"
+          Write-Host "============================================================"
+
       - name: Keep runner alive
-        shell: powershell
-        run: Start-Sleep -Seconds 21600
-
-      # Сохраняем все пользовательские данные в архив
-      - name: Save all user data to artifact
-        shell: powershell
+        shell: pwsh
         run: |
-          Write-Host "Saving your data..."
-          Compress-Archive -Path C:\Users\runneradmin\* -DestinationPath C:\temp\persistent_data.zip -Force
-          Write-Host "Archive created."
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: persistent-data
-          path: C:\temp\persistent_data.zip
-          retention-days: 90
+          Write-Host "⏳ Runner will stay alive for 6 hours."
+          Start-Sleep -Seconds 21600
