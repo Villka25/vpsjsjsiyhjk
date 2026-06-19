@@ -1,4 +1,4 @@
-name: Ubuntu Desktop (VNC via Cloudflare Tunnel)
+name: Ubuntu Desktop (noVNC via Cloudflare)
 
 on:
   workflow_dispatch:
@@ -7,13 +7,13 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install desktop and VNC components
+      - name: Install desktop, VNC, noVNC and cloudflared
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common
-
-      - name: Install cloudflared
-        run: |
+          sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server
+          sudo apt install -y git python3 python3-pip
+          pip3 install websockify
+          git clone https://github.com/novnc/noVNC.git ~/noVNC
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
@@ -35,20 +35,27 @@ jobs:
         run: |
           vncserver :1 -geometry 1280x720 -depth 24 -localhost yes
           sleep 3
-          if ! pgrep -x Xtigervnc > /dev/null; then
-            echo "ERROR: VNC server failed to start!"
-            exit 1
-          fi
 
-      - name: Expose VNC via Cloudflare Tunnel (TCP)
+      - name: Start noVNC (websockify)
         run: |
-          cloudflared tunnel --url tcp://localhost:5901 &
+          websockify --web ~/noVNC 8080 localhost:5901 &
+          sleep 3
+
+      - name: Expose noVNC via Cloudflare Tunnel
+        run: |
+          cloudflared tunnel --url http://localhost:8080 &
           sleep 10
           echo "============================================================"
-          echo "Cloudflare tunnel is running."
-          echo "Look for a line like: 'tcp://random-name.trycloudflare.com:12345'"
-          echo "Connect your VNC client to that address."
-          echo "Password: secret"
+          echo "✅ Cloudflare Tunnel is running."
+          echo ""
+          echo "🌐 Open this URL in your browser:"
+          echo "   (Look for the line with 'trycloudflare.com' in the logs above)"
+          echo ""
+          echo "   Example: https://random-name.trycloudflare.com"
+          echo ""
+          echo "   Then add /vnc.html?password=secret to the URL, e.g.:"
+          echo "   https://random-name.trycloudflare.com/vnc.html?password=secret"
+          echo ""
+          echo "🔑 VNC password: secret"
           echo "============================================================"
-          # Keep the job alive so the tunnel stays open
           sleep 6h
