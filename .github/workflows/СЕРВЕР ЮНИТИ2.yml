@@ -6,14 +6,15 @@ on:
       level_url:
         description: 'Ссылка на ZIP-архив с папкой уровня (catbox.moe)'
         required: true
-        default: 'https://files.catbox.moe/51xx79.zip'
+        default: 'https://files.catbox.moe/lt4940.zip'
 
 jobs:
   convert_and_build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
-      - name: Install dependencies (without blender)
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y wget unzip python3-pip
@@ -27,7 +28,6 @@ jobs:
           export PATH=/opt/blender-3.6:$PATH
           echo "export PATH=/opt/blender-3.6:$PATH" >> ~/.bashrc
           /opt/blender-3.6/blender --version
-          echo "✅ Blender 3.6.5 installed"
 
       - name: Install blender-xray plugin
         run: |
@@ -35,44 +35,56 @@ jobs:
           git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
           mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
           cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
-          echo "✅ blender-xray installed for Blender $BLENDER_VER"
+          # Проверяем, что файл __init__.py есть
+          if [ ! -f ~/.config/blender/$BLENDER_VER/scripts/addons/io_scene_xray/__init__.py ]; then
+            echo "❌ Плагин не установлен корректно"
+            exit 1
+          fi
+          echo "✅ blender-xray installed"
 
       - name: Download and extract level
         run: |
           mkdir -p ~/level
           cd ~/level
-          wget -O level.zip "${{ github.event.inputs.level_url }}"
-          unzip level.zip
+          curl -L --retry 5 --retry-delay 10 -o level.zip "${{ github.event.inputs.level_url }}"
+          if [ ! -s level.zip ]; then
+            echo "❌ Загрузка не удалась: файл пуст"
+            exit 1
+          fi
+          unzip -o level.zip
           rm level.zip
-          echo "✅ Level extracted to ~/level"
+          if ! find . -type f -name "level" ! -name "*.*" | grep -q .; then
+            echo "❌ Файл 'level' не найден"
+            exit 1
+          fi
+          echo "✅ Уровень распакован"
 
       - name: Convert .level to .fbx
         run: |
           cd ~/level
           LEVEL_FILE=$(find . -type f -name "level" ! -name "*.*" | head -1)
-          if [ -z "$LEVEL_FILE" ]; then
-            echo "❌ Файл 'level' не найден!"
-            exit 1
-          fi
           echo "Найден файл уровня: $LEVEL_FILE"
           cat > convert.py << 'EOF'
           import bpy
           import sys
           import os
+          # Включаем аддон
+          bpy.ops.preferences.addon_enable(module="io_scene_xray")
           level_path = sys.argv[-2]
           output_path = sys.argv[-1]
           bpy.ops.wm.read_homefile(use_empty=True)
+          # Повторно включаем после сброса сцены
+          bpy.ops.preferences.addon_enable(module="io_scene_xray")
           bpy.ops.import_scene.xray_level(filepath=level_path)
           bpy.ops.export_scene.fbx(filepath=output_path, use_selection=False)
           print("✅ Export done")
           EOF
           /opt/blender-3.6/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
-          if [ -f "level.fbx" ]; then
-            echo "✅ Конвертация успешна"
-          else
+          if [ ! -f "level.fbx" ]; then
             echo "❌ Ошибка: level.fbx не создан"
             exit 1
           fi
+          echo "✅ Конвертация успешна"
 
       - name: Upload FBX artifact
         uses: actions/upload-artifact@v4
@@ -87,7 +99,6 @@ jobs:
           sudo apt update
           sudo apt install -y unityhub
           unityhub --headless install --version 2022.3.22f1 --changeset b9e6963d9e67
-          echo "✅ Unity 2022.3.22f1 installed"
 
       - name: Setup Unity project
         run: |
@@ -126,9 +137,22 @@ jobs:
               }
           }
           EOF
-          echo "✅ Unity project created"
 
       - name: Build Unity project
         run: |
           cd ~/UnityProject
           ~/Unity/Hub/Editor/2022.3.22f1/Editor/Unity \
+            -batchmode -nographics -quit \
+            -projectPath . \
+            -executeMethod BuildScript.Build
+          if [ ! -d "build" ]; then
+            echo "❌ Build failed"
+            exit 1
+          fi
+          echo "✅ Build successful"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity_game_build
+          path: ~/UnityProject/build/
