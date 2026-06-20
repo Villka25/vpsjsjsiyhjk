@@ -20,27 +20,27 @@ jobs:
           sudo apt install -y wget unzip python3-pip
           pip3 install numpy
 
-      - name: Install Blender 3.6.5 LTS
+      - name: Install Blender 2.93 LTS
         run: |
-          wget -q https://download.blender.org/release/Blender3.6/blender-3.6.5-linux-x64.tar.xz
-          tar -xf blender-3.6.5-linux-x64.tar.xz
-          sudo mv blender-3.6.5-linux-x64 /opt/blender-3.6
-          export PATH=/opt/blender-3.6:$PATH
-          echo "export PATH=/opt/blender-3.6:$PATH" >> ~/.bashrc
-          /opt/blender-3.6/blender --version
+          wget -q https://download.blender.org/release/Blender2.93/blender-2.93.18-linux-x64.tar.xz
+          tar -xf blender-2.93.18-linux-x64.tar.xz
+          sudo mv blender-2.93.18-linux-x64 /opt/blender-2.93
+          export PATH=/opt/blender-2.93:$PATH
+          echo "export PATH=/opt/blender-2.93:$PATH" >> ~/.bashrc
+          /opt/blender-2.93/blender --version
 
       - name: Install blender-xray plugin
         run: |
-          BLENDER_VER="3.6"
+          BLENDER_VER="2.93"
           git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
           mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
           cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
-          # Проверяем, что файл __init__.py есть
+          # Проверка
           if [ ! -f ~/.config/blender/$BLENDER_VER/scripts/addons/io_scene_xray/__init__.py ]; then
-            echo "❌ Плагин не установлен корректно"
+            echo "❌ Плагин не установлен"
             exit 1
           fi
-          echo "✅ blender-xray installed"
+          echo "✅ blender-xray installed for Blender $BLENDER_VER"
 
       - name: Download and extract level
         run: |
@@ -48,7 +48,7 @@ jobs:
           cd ~/level
           curl -L --retry 5 --retry-delay 10 -o level.zip "${{ github.event.inputs.level_url }}"
           if [ ! -s level.zip ]; then
-            echo "❌ Загрузка не удалась: файл пуст"
+            echo "❌ Загрузка не удалась"
             exit 1
           fi
           unzip -o level.zip
@@ -68,18 +68,18 @@ jobs:
           import bpy
           import sys
           import os
-          # Включаем аддон
+          # Активируем аддон вручную
+          bpy.ops.preferences.addon_enable(module="io_scene_xray")
+          bpy.ops.wm.read_homefile(use_empty=True)
+          # Снова активируем после сброса сцены
           bpy.ops.preferences.addon_enable(module="io_scene_xray")
           level_path = sys.argv[-2]
           output_path = sys.argv[-1]
-          bpy.ops.wm.read_homefile(use_empty=True)
-          # Повторно включаем после сброса сцены
-          bpy.ops.preferences.addon_enable(module="io_scene_xray")
           bpy.ops.import_scene.xray_level(filepath=level_path)
           bpy.ops.export_scene.fbx(filepath=output_path, use_selection=False)
           print("✅ Export done")
           EOF
-          /opt/blender-3.6/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
+          /opt/blender-2.93/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
           if [ ! -f "level.fbx" ]; then
             echo "❌ Ошибка: level.fbx не создан"
             exit 1
