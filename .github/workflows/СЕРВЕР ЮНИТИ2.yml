@@ -20,27 +20,14 @@ jobs:
           sudo apt install -y wget unzip python3-pip
           pip3 install numpy
 
-      - name: Install Blender 2.93 LTS
+      - name: Install Blender 2.79 LTS (stable for xray plugin)
         run: |
-          wget -q https://download.blender.org/release/Blender2.93/blender-2.93.18-linux-x64.tar.xz
-          tar -xf blender-2.93.18-linux-x64.tar.xz
-          sudo mv blender-2.93.18-linux-x64 /opt/blender-2.93
-          export PATH=/opt/blender-2.93:$PATH
-          echo "export PATH=/opt/blender-2.93:$PATH" >> ~/.bashrc
-          /opt/blender-2.93/blender --version
-
-      - name: Install blender-xray plugin
-        run: |
-          BLENDER_VER="2.93"
-          git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
-          mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
-          cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
-          # Проверка
-          if [ ! -f ~/.config/blender/$BLENDER_VER/scripts/addons/io_scene_xray/__init__.py ]; then
-            echo "❌ Плагин не установлен"
-            exit 1
-          fi
-          echo "✅ blender-xray installed for Blender $BLENDER_VER"
+          wget -q https://download.blender.org/release/Blender2.79/blender-2.79b-linux-glibc219-x86_64.tar.bz2
+          tar -xjf blender-2.79b-linux-glibc219-x86_64.tar.bz2
+          sudo mv blender-2.79b-linux-glibc219-x86_64 /opt/blender-2.79
+          export PATH=/opt/blender-2.79:$PATH
+          echo "export PATH=/opt/blender-2.79:$PATH" >> ~/.bashrc
+          /opt/blender-2.79/blender --version
 
       - name: Download and extract level
         run: |
@@ -59,6 +46,19 @@ jobs:
           fi
           echo "✅ Уровень распакован"
 
+      - name: Install blender-xray plugin (Blender 2.79 version)
+        run: |
+          wget -q https://github.com/PavelBlend/blender-xray/releases/download/v2.20/io_scene_xray_2.20.zip -O /tmp/plugin.zip
+          mkdir -p ~/.config/blender/2.79/scripts/addons/
+          unzip -q /tmp/plugin.zip -d ~/.config/blender/2.79/scripts/addons/
+          rm /tmp/plugin.zip
+          # Проверяем наличие основного файла
+          if [ ! -f ~/.config/blender/2.79/scripts/addons/io_scene_xray/__init__.py ]; then
+            echo "❌ Плагин не установлен правильно"
+            exit 1
+          fi
+          echo "✅ Plugin installed for Blender 2.79"
+
       - name: Convert .level to .fbx
         run: |
           cd ~/level
@@ -68,18 +68,22 @@ jobs:
           import bpy
           import sys
           import os
-          # Активируем аддон вручную
+          # Включаем аддон
           bpy.ops.preferences.addon_enable(module="io_scene_xray")
-          bpy.ops.wm.read_homefile(use_empty=True)
-          # Снова активируем после сброса сцены
-          bpy.ops.preferences.addon_enable(module="io_scene_xray")
+          # Проверяем, что оператор появился
+          if not hasattr(bpy.ops.import_scene, 'xray_level'):
+              print("Ошибка: оператор xray_level не найден")
+              sys.exit(1)
           level_path = sys.argv[-2]
           output_path = sys.argv[-1]
+          bpy.ops.wm.read_homefile(use_empty=True)
+          # Снова включаем после сброса
+          bpy.ops.preferences.addon_enable(module="io_scene_xray")
           bpy.ops.import_scene.xray_level(filepath=level_path)
           bpy.ops.export_scene.fbx(filepath=output_path, use_selection=False)
           print("✅ Export done")
           EOF
-          /opt/blender-2.93/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
+          /opt/blender-2.79/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
           if [ ! -f "level.fbx" ]; then
             echo "❌ Ошибка: level.fbx не создан"
             exit 1
