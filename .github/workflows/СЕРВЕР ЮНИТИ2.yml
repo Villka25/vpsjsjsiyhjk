@@ -1,143 +1,179 @@
-name: ULTIMATE SPEED MODE
+name: Stalker Level → Unity Build
 
 on:
   workflow_dispatch:
     inputs:
-      game_exe:
-        description: 'Имя исполняемого файла (например, MyGame.x86_64)'
+      level_url:
+        description: 'Ссылка на ZIP-архив с папкой уровня (например, catbox.moe)'
         required: true
-        default: 'MyGame.x86_64'
-      is_windows:
-        description: 'Это Windows-сборка? (true/false)'
-        required: false
-        default: 'false'
+        default: 'https://files.catbox.moe/51xx79.zip'
 
 jobs:
-  ultra_speed:
-    # Максимальный CPU-раннер
-    runs-on: ubuntu-latest-16-cores
-    # Если нет 16-ядерного, используем 8-ядерный
-    # runs-on: ubuntu-latest-8-cores
+  convert_and_build:
+    runs-on: ubuntu-latest
 
     steps:
-      # 1. Установка всего необходимого для работы и оптимизации
-      - name: Install system packages and optimize OS
+      # 1. Установка зависимостей
+      - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y \
-            wget unzip \
-            xvfb \
-            mesa-utils \
-            libgl1-mesa-dri \
-            libgl1-mesa-glx \
-            libglu1-mesa \
-            libxrandr2 \
-            libxinerama1 \
-            libxcursor1 \
-            libxi6 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxfixes3 \
-            libxext6 \
-            libxrender1 \
-            libxtst6 \
-            libdbus-glib-1-2 \
-            libgtk-3-0 \
-            libnss3 \
-            libasound2
+          sudo apt install -y wget unzip blender python3-pip
+          pip3 install numpy
 
-      # 2. Оптимизация CPU (режим производительности)
-      - name: Set CPU governor to performance
+      # 2. Скачивание и распаковка уровня
+      - name: Download and extract level
         run: |
-          sudo apt install -y linux-tools-common linux-tools-$(uname -r) || true
-          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
-          echo "✅ CPU governor set to performance"
+          mkdir -p ~/level
+          cd ~/level
+          wget -O level.zip "${{ github.event.inputs.level_url }}"
+          unzip level.zip
+          rm level.zip
+          echo "✅ Level extracted to ~/level"
 
-      # 3. Отключение ненужных сервисов для освобождения ресурсов
-      - name: Disable unnecessary services
+      # 3. Установка плагина blender-xray (для Blender 3.6)
+      - name: Install blender-xray plugin
         run: |
-          sudo systemctl stop unattended-upgrades || true
-          sudo systemctl disable unattended-upgrades || true
-          sudo systemctl stop snapd || true
-          sudo systemctl disable snapd || true
-          sudo systemctl stop systemd-resolved || true
-          sudo systemctl stop systemd-timesyncd || true
-          echo "✅ Unnecessary services disabled"
+          # Убедимся, что используется Blender 3.6 (по умолчанию в Ubuntu 22.04)
+          BLENDER_VER=$(blender --version | head -1 | grep -oP '\d+\.\d+' | head -1)
+          echo "Using Blender version: $BLENDER_VER"
+          # Скачиваем плагин
+          git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
+          mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
+          cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
+          echo "✅ blender-xray installed for Blender $BLENDER_VER"
 
-      # 4. Создание RAM-диска для временных файлов (ускорение I/O)
-      - name: Create RAM disk for temporary files
+      # 4. Конвертация .level → .fbx (Blender headless)
+      - name: Convert .level to .fbx
         run: |
-          sudo mkdir -p /mnt/ramdisk
-          sudo mount -t tmpfs -o size=4G tmpfs /mnt/ramdisk
-          echo "✅ RAM disk mounted at /mnt/ramdisk"
-
-      # 5. Скачивание и распаковка игры
-      - name: Download and extract game
-        run: |
-          mkdir -p /mnt/ramdisk/game
-          cd /mnt/ramdisk/game
-          # Замените URL на вашу ссылку
-          wget -O game.zip "https://files.catbox.moe/ваш_файл.zip"
-          unzip -q game.zip
-          rm game.zip
-          echo "✅ Game extracted to /mnt/ramdisk/game"
-
-      # 6. Настройка прав и переменных для графики
-      - name: Setup graphics environment
-        run: |
-          export DISPLAY=:99
-          export SDL_VIDEO_X11_WMCLASS="Game"
-          export SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR=0
-          echo "export DISPLAY=:99" >> ~/.bashrc
-
-      # 7. Запуск Xvfb (виртуальный X-сервер) для работы графики
-      - name: Start Xvfb
-        run: |
-          Xvfb :99 -screen 0 640x480x24 -ac -nolisten tcp -extension GLX +extension RANDR &
-          sleep 3
-          echo "✅ Xvfb started on :99"
-
-      # 8. Запуск игры с максимальной оптимизацией
-      - name: Launch game with ultra settings
-        run: |
-          cd /mnt/ramdisk/game
-          chmod +x ${{ github.event.inputs.game_exe }}
-          if [ "${{ github.event.inputs.is_windows }}" == "true" ]; then
-            # Windows-сборка через Wine (без DXVK, т.к. он может не работать)
-            sudo apt install -y wine64 wine32
-            # Запуск с минимальным разрешением, программный рендеринг
-            wine ${{ github.event.inputs.game_exe }} \
-              -force-software-rendering \
-              -screen-width 320 \
-              -screen-height 240 \
-              -windowed \
-              -v-sync Off \
-              -fps 30 \
-              -quality-level 0 \
-              -shadow-quality 0 \
-              -texture-quality 0
+          cd ~/level
+          # Ищем файл "level" (без расширения)
+          LEVEL_FILE=$(find . -type f -name "level" ! -name "*.*" | head -1)
+          if [ -z "$LEVEL_FILE" ]; then
+            echo "❌ Файл 'level' не найден в распакованной папке!"
+            exit 1
+          fi
+          echo "Найден файл уровня: $LEVEL_FILE"
+          # Создаём Python-скрипт для Blender
+          cat > convert.py << 'EOF'
+          import bpy
+          import sys
+          import os
+          level_path = sys.argv[-2]
+          output_path = sys.argv[-1]
+          # Очищаем сцену
+          bpy.ops.wm.read_homefile(use_empty=True)
+          # Импортируем уровень
+          try:
+              bpy.ops.import_scene.xray_level(filepath=level_path)
+          except Exception as e:
+              print("Ошибка импорта:", e)
+              sys.exit(1)
+          # Экспортируем в FBX
+          bpy.ops.export_scene.fbx(filepath=output_path, use_selection=False)
+          print("✅ Экспорт завершён")
+          EOF
+          # Запускаем Blender в фоновом режиме
+          blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
+          if [ -f "level.fbx" ]; then
+            echo "✅ Конвертация успешна: level.fbx создан"
           else
-            # Нативная Linux-сборка
-            ./${{ github.event.inputs.game_exe }} \
-              -force-software-rendering \
-              -screen-width 320 \
-              -screen-height 240 \
-              -windowed \
-              -v-sync Off \
-              -fps 30 \
-              -quality-level 0 \
-              -shadow-quality 0 \
-              -texture-quality 0
+            echo "❌ Ошибка: level.fbx не создан"
+            exit 1
           fi
 
-      # 9. Если игра не требует графики (тест логики) — используйте этот шаг вместо предыдущего
-      # - name: Launch in headless mode (no graphics)
-      #   run: |
-      #     cd /mnt/ramdisk/game
-      #     ./${{ github.event.inputs.game_exe }} -batchmode -nographics
+      # 5. Сохраняем FBX как артефакт (на всякий случай)
+      - name: Upload FBX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: level_fbx
+          path: ~/level/level.fbx
 
-      # 10. Keep runner alive (для отладки или удалённого доступа)
-      - name: Keep runner alive
+      # 6. Установка Unity Hub и редактора
+      - name: Install Unity
         run: |
-          echo "✅ Game is running. If you want to debug, connect via VNC or SSH."
-          sleep 6h
+          wget -qO - https://hub.unity3d.com/linux/keys/public | sudo gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
+          sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" > /etc/apt/sources.list.d/unityhub.list'
+          sudo apt update
+          sudo apt install -y unityhub
+          # Устанавливаем Unity 2022.3.22f1 LTS (стабильная версия)
+          unityhub --headless install --version 2022.3.22f1 --changeset b9e6963d9e67
+          echo "✅ Unity 2022.3.22f1 installed"
+
+      # 7. Создаём минимальный Unity-проект и добавляем уровень
+      - name: Setup Unity project
+        run: |
+          mkdir -p ~/UnityProject/Assets
+          mkdir -p ~/UnityProject/ProjectSettings
+          # Копируем FBX в Assets
+          cp ~/level/level.fbx ~/UnityProject/Assets/
+          # Создаём ProjectVersion.txt
+          cat > ~/UnityProject/ProjectSettings/ProjectVersion.txt << EOF
+          m_EditorVersion: 2022.3.22f1
+          m_EditorVersionWithRevision: 2022.3.22f1 (b9e6963d9e67)
+          EOF
+          # Создаём скрипт сборки
+          mkdir -p ~/UnityProject/Assets/Editor
+          cat > ~/UnityProject/Assets/Editor/BuildScript.cs << 'EOF'
+          using UnityEditor;
+          using UnityEngine;
+          using System.IO;
+          public class BuildScript
+          {
+              public static void Build()
+              {
+                  // Настраиваем сцены (добавляем текущую сцену, если есть)
+                  string[] scenes = { "Assets/level.fbx" }; // FBX не является сценой, поэтому создадим пустую
+                  // Создаём пустую сцену
+                  EditorApplication.NewScene();
+                  // Импортируем FBX в сцену
+                  string fbxPath = "Assets/level.fbx";
+                  if (File.Exists(fbxPath))
+                  {
+                      // Загружаем модель
+                      GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
+                      if (model != null)
+                      {
+                          GameObject.Instantiate(model);
+                      }
+                  }
+                  // Сохраняем сцену
+                  string scenePath = "Assets/LevelScene.unity";
+                  EditorApplication.SaveScene(scenePath);
+                  // Добавляем сцену в список сборки
+                  scenes = new string[] { scenePath };
+                  // Собираем
+                  BuildPipeline.BuildPlayer(
+                      scenes,
+                      "build/Game.exe",
+                      BuildTarget.StandaloneWindows64,
+                      BuildOptions.None
+                  );
+              }
+          }
+          EOF
+          echo "✅ Unity project created"
+
+      # 8. Сборка проекта
+      - name: Build Unity project
+        run: |
+          cd ~/UnityProject
+          # Запускаем сборку
+          ~/Unity/Hub/Editor/2022.3.22f1/Editor/Unity \
+            -batchmode \
+            -nographics \
+            -quit \
+            -projectPath . \
+            -executeMethod BuildScript.Build
+          if [ -d "build" ]; then
+            echo "✅ Build successful"
+          else
+            echo "❌ Build failed"
+            exit 1
+          fi
+
+      # 9. Загрузка готового билда как артефакта
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity_game_build
+          path: ~/UnityProject/build/
