@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       level_url:
-        description: 'Ссылка на ZIP-архив с папкой уровня (например, catbox.moe)'
+        description: 'Ссылка на ZIP-архив с папкой уровня (catbox.moe)'
         required: true
         default: 'https://files.catbox.moe/51xx79.zip'
 
@@ -13,14 +13,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Установка зависимостей
-      - name: Install dependencies
+      - name: Install dependencies (without blender)
         run: |
           sudo apt update
-          sudo apt install -y wget unzip blender python3-pip
+          sudo apt install -y wget unzip python3-pip
           pip3 install numpy
 
-      # 2. Скачивание и распаковка уровня
+      - name: Install Blender 3.6.5 LTS
+        run: |
+          wget -q https://download.blender.org/release/Blender3.6/blender-3.6.5-linux-x64.tar.xz
+          tar -xf blender-3.6.5-linux-x64.tar.xz
+          sudo mv blender-3.6.5-linux-x64 /opt/blender-3.6
+          export PATH=/opt/blender-3.6:$PATH
+          echo "export PATH=/opt/blender-3.6:$PATH" >> ~/.bashrc
+          /opt/blender-3.6/blender --version
+          echo "✅ Blender 3.6.5 installed"
+
+      - name: Install blender-xray plugin
+        run: |
+          BLENDER_VER="3.6"
+          git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
+          mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
+          cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
+          echo "✅ blender-xray installed for Blender $BLENDER_VER"
+
       - name: Download and extract level
         run: |
           mkdir -p ~/level
@@ -30,88 +46,58 @@ jobs:
           rm level.zip
           echo "✅ Level extracted to ~/level"
 
-      # 3. Установка плагина blender-xray (для Blender 3.6)
-      - name: Install blender-xray plugin
-        run: |
-          # Убедимся, что используется Blender 3.6 (по умолчанию в Ubuntu 22.04)
-          BLENDER_VER=$(blender --version | head -1 | grep -oP '\d+\.\d+' | head -1)
-          echo "Using Blender version: $BLENDER_VER"
-          # Скачиваем плагин
-          git clone --depth 1 https://github.com/PavelBlend/blender-xray.git ~/blender-xray
-          mkdir -p ~/.config/blender/$BLENDER_VER/scripts/addons/
-          cp -r ~/blender-xray/io_scene_xray ~/.config/blender/$BLENDER_VER/scripts/addons/
-          echo "✅ blender-xray installed for Blender $BLENDER_VER"
-
-      # 4. Конвертация .level → .fbx (Blender headless)
       - name: Convert .level to .fbx
         run: |
           cd ~/level
-          # Ищем файл "level" (без расширения)
           LEVEL_FILE=$(find . -type f -name "level" ! -name "*.*" | head -1)
           if [ -z "$LEVEL_FILE" ]; then
-            echo "❌ Файл 'level' не найден в распакованной папке!"
+            echo "❌ Файл 'level' не найден!"
             exit 1
           fi
           echo "Найден файл уровня: $LEVEL_FILE"
-          # Создаём Python-скрипт для Blender
           cat > convert.py << 'EOF'
           import bpy
           import sys
           import os
           level_path = sys.argv[-2]
           output_path = sys.argv[-1]
-          # Очищаем сцену
           bpy.ops.wm.read_homefile(use_empty=True)
-          # Импортируем уровень
-          try:
-              bpy.ops.import_scene.xray_level(filepath=level_path)
-          except Exception as e:
-              print("Ошибка импорта:", e)
-              sys.exit(1)
-          # Экспортируем в FBX
+          bpy.ops.import_scene.xray_level(filepath=level_path)
           bpy.ops.export_scene.fbx(filepath=output_path, use_selection=False)
-          print("✅ Экспорт завершён")
+          print("✅ Export done")
           EOF
-          # Запускаем Blender в фоновом режиме
-          blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
+          /opt/blender-3.6/blender --background --python convert.py -- "$LEVEL_FILE" "level.fbx"
           if [ -f "level.fbx" ]; then
-            echo "✅ Конвертация успешна: level.fbx создан"
+            echo "✅ Конвертация успешна"
           else
             echo "❌ Ошибка: level.fbx не создан"
             exit 1
           fi
 
-      # 5. Сохраняем FBX как артефакт (на всякий случай)
       - name: Upload FBX artifact
         uses: actions/upload-artifact@v4
         with:
           name: level_fbx
           path: ~/level/level.fbx
 
-      # 6. Установка Unity Hub и редактора
       - name: Install Unity
         run: |
           wget -qO - https://hub.unity3d.com/linux/keys/public | sudo gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
           sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" > /etc/apt/sources.list.d/unityhub.list'
           sudo apt update
           sudo apt install -y unityhub
-          # Устанавливаем Unity 2022.3.22f1 LTS (стабильная версия)
           unityhub --headless install --version 2022.3.22f1 --changeset b9e6963d9e67
           echo "✅ Unity 2022.3.22f1 installed"
 
-      # 7. Создаём минимальный Unity-проект и добавляем уровень
       - name: Setup Unity project
         run: |
           mkdir -p ~/UnityProject/Assets
           mkdir -p ~/UnityProject/ProjectSettings
-          # Копируем FBX в Assets
           cp ~/level/level.fbx ~/UnityProject/Assets/
-          # Создаём ProjectVersion.txt
           cat > ~/UnityProject/ProjectSettings/ProjectVersion.txt << EOF
           m_EditorVersion: 2022.3.22f1
           m_EditorVersionWithRevision: 2022.3.22f1 (b9e6963d9e67)
           EOF
-          # Создаём скрипт сборки
           mkdir -p ~/UnityProject/Assets/Editor
           cat > ~/UnityProject/Assets/Editor/BuildScript.cs << 'EOF'
           using UnityEditor;
@@ -121,27 +107,16 @@ jobs:
           {
               public static void Build()
               {
-                  // Настраиваем сцены (добавляем текущую сцену, если есть)
-                  string[] scenes = { "Assets/level.fbx" }; // FBX не является сценой, поэтому создадим пустую
-                  // Создаём пустую сцену
                   EditorApplication.NewScene();
-                  // Импортируем FBX в сцену
                   string fbxPath = "Assets/level.fbx";
                   if (File.Exists(fbxPath))
                   {
-                      // Загружаем модель
                       GameObject model = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
-                      if (model != null)
-                      {
-                          GameObject.Instantiate(model);
-                      }
+                      if (model != null) GameObject.Instantiate(model);
                   }
-                  // Сохраняем сцену
                   string scenePath = "Assets/LevelScene.unity";
                   EditorApplication.SaveScene(scenePath);
-                  // Добавляем сцену в список сборки
-                  scenes = new string[] { scenePath };
-                  // Собираем
+                  string[] scenes = { scenePath };
                   BuildPipeline.BuildPlayer(
                       scenes,
                       "build/Game.exe",
@@ -153,27 +128,7 @@ jobs:
           EOF
           echo "✅ Unity project created"
 
-      # 8. Сборка проекта
       - name: Build Unity project
         run: |
           cd ~/UnityProject
-          # Запускаем сборку
           ~/Unity/Hub/Editor/2022.3.22f1/Editor/Unity \
-            -batchmode \
-            -nographics \
-            -quit \
-            -projectPath . \
-            -executeMethod BuildScript.Build
-          if [ -d "build" ]; then
-            echo "✅ Build successful"
-          else
-            echo "❌ Build failed"
-            exit 1
-          fi
-
-      # 9. Загрузка готового билда как артефакта
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: unity_game_build
-          path: ~/UnityProject/build/
