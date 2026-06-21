@@ -1,13 +1,3 @@
-name: Wine + Project Files (no Unity)
-
-on:
-  workflow_dispatch:
-    inputs:
-      archive_url:
-        description: 'Ссылка на архив с файлами (catbox.moe)'
-        required: true
-        default: 'https://files.catbox.moe/51xx79.zip'
-
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -19,7 +9,6 @@ jobs:
           sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-pip
           pip3 install websockify
 
-      # Установка Wine
       - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386
@@ -27,7 +16,47 @@ jobs:
           sudo apt install -y wine64 wine32
           wine --version
 
-      # Скачивание и распаковка архива
+      # 🆕 Установка браузеров
+      - name: Install browsers
+        run: |
+          sudo apt install -y firefox
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt update
+          sudo apt install -y google-chrome-stable
+          curl -s https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+          sudo add-apt-repository "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main"
+          sudo apt update
+          sudo apt install -y microsoft-edge-stable
+          mkdir -p ~/Desktop
+          cat > ~/Desktop/Chrome.desktop << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Google Chrome
+          Exec=google-chrome-stable
+          Icon=google-chrome
+          Terminal=false
+          EOF
+          chmod +x ~/Desktop/Chrome.desktop
+          cat > ~/Desktop/Edge.desktop << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Microsoft Edge
+          Exec=microsoft-edge-stable
+          Icon=edge
+          Terminal=false
+          EOF
+          chmod +x ~/Desktop/Edge.desktop
+          cat > ~/Desktop/Firefox.desktop << EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Firefox
+          Exec=firefox
+          Icon=firefox
+          Terminal=false
+          EOF
+          chmod +x ~/Desktop/Firefox.desktop
+
       - name: Download and extract project
         run: |
           mkdir -p ~/Project
@@ -35,9 +64,7 @@ jobs:
           wget -O archive.zip "${{ github.event.inputs.archive_url }}"
           unzip archive.zip
           rm archive.zip
-          echo "✅ Файлы распакованы в ~/Project"
 
-      # Создание ярлыков для всех .exe
       - name: Create shortcuts for .exe files
         run: |
           mkdir -p ~/Desktop
@@ -55,7 +82,6 @@ jobs:
           done
           ln -s ~/Project ~/Desktop/Project
 
-      # noVNC + Cloudflare Tunnel
       - name: Install noVNC and Cloudflare
         run: |
           git clone https://github.com/novnc/noVNC.git ~/noVNC
@@ -99,6 +125,7 @@ jobs:
               echo "🔑 Password: secret"
               echo "📍 Your files: ~/Project (Desktop shortcut 'Project')"
               echo "   .exe shortcuts are on the Desktop"
+              echo "   Браузеры: Chrome, Edge, Firefox — ярлыки на рабочем столе"
               echo "============================================================"
               break
             fi
