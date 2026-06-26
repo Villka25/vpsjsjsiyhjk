@@ -1,11 +1,11 @@
-name: RW-HPS Server (Windows + start.bat)
+name: RW-HPS Server with bore
 
 on:
   workflow_dispatch:
 
 jobs:
   server:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
@@ -17,58 +17,76 @@ jobs:
 
       - name: Download & extract RW-HPS
         run: |
-          Invoke-WebRequest -Uri "https://github.com/RW-HPS/RW-HPS/releases/download/v3.0.0/3.0.0.zip" -OutFile "RW-HPS.zip"
-          Expand-Archive -Path "RW-HPS.zip" -DestinationPath "RW-HPS"
-          cd RW-HPS
-          # Если внутри есть папка 3.0.0, перемещаем содержимое
-          if (Test-Path "3.0.0") {
-            Move-Item -Path "3.0.0\*" -Destination "." -Force
-            Remove-Item -Path "3.0.0" -Recurse
+          wget -O RW-HPS.zip https://github.com/RW-HPS/RW-HPS/releases/download/v3.0.0/3.0.0.zip
+          unzip RW-HPS.zip -d RW-HPS
+          if [ -d RW-HPS/3.0.0 ]; then
+            mv RW-HPS/3.0.0/* RW-HPS/
+            rmdir RW-HPS/3.0.0
+          fi
+          ls -la RW-HPS
+          cat RW-HPS/start.bat || echo "start.bat not found"
+
+      - name: Create missing BindConfig.json
+        run: |
+          mkdir -p RW-HPS/data
+          cat > RW-HPS/data/BindConfig.json << EOF
+          {
+            "host": "0.0.0.0",
+            "port": 5123
           }
-          Get-ChildItem
-          # Показываем содержимое start.bat для информации
-          Get-Content start.bat
+          EOF
+          echo "✅ BindConfig.json created:"
+          cat RW-HPS/data/BindConfig.json
 
-      - name: Start server via start.bat (background)
+      - name: Start RW-HPS server
         run: |
           cd RW-HPS
-          # Запускаем start.bat в фоне, перенаправляя вывод в файл
-          Start-Process -NoNewWindow -FilePath "cmd.exe" -ArgumentList "/c start.bat" -RedirectStandardOutput "server.log" -RedirectStandardError "server-error.log"
-          # Даём время на инициализацию
-          Start-Sleep -Seconds 30
-          # Проверяем, слушается ли порт 5123
-          netstat -ano | findstr 5123
-          # Показываем последние 30 строк лога
-          Get-Content server.log -Tail 30
+          JAR=$(find . -name "Server-All.jar" | head -1)
+          if [ -z "$JAR" ]; then
+            echo "❌ Server-All.jar not found!"
+            exit 1
+          fi
+          echo "✅ Found JAR: $JAR"
+          # Добавляем -Djava.net.preferIPv4Stack=true и --agree
+          nohup java -Djava.net.preferIPv4Stack=true -Xmx2G -jar "$JAR" --agree < /dev/null > server.log 2>&1 &
+          sleep 30
+          # Проверяем порт
+          ss -tlnp | grep 5123 && echo "✅ Port 5123 is listening" || echo "⚠️ Port not yet open"
+          tail -50 server.log
+          pgrep -f Server-All.jar && echo "✅ Server process is alive" || echo "❌ Server process died"
 
-      - name: Install bore (Windows)
+      - name: Install bore (v0.6.0)
         run: |
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
-          Expand-Archive -Path "bore.zip" -DestinationPath "bore"
-          # Добавляем папку bore в PATH
-          echo "$env:GITHUB_WORKSPACE\bore" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          tar xzf bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/
+          rm bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz
+          bore --version
 
-      - name: Start bore tunnel (Windows)
+      - name: Expose server via bore (auto-restart)
         run: |
-          cd bore
-          # Запускаем bore в фоне
-          Start-Process -NoNewWindow -FilePath ".\bore.exe" -ArgumentList "local 5123 --to bore.pub" -RedirectStandardOutput "..\bore.log" -RedirectStandardError "..\bore-error.log"
-          Start-Sleep -Seconds 15
-          # Показываем лог туннеля
-          Get-Content ..\bore.log -ErrorAction SilentlyContinue
-          # Пытаемся извлечь порт
-          $log = Get-Content ..\bore.log -Raw
-          if ($log -match 'listening at bore\.pub:(\d+)') {
-            $port = $matches[1]
-            Write-Host "============================================"
-            Write-Host "✅ RW-HPS сервер доступен: bore.pub:$port"
-            Write-Host "============================================"
-          } else {
-            Write-Host "⚠️ Адрес туннеля не найден, проверьте bore.log"
-          }
+          (
+            while true; do
+              echo "$(date) - Bore tunnel starting..."
+              bore local 5123 --to bore.pub 2>&1 | while IFS= read -r line; do
+                echo "$line"
+                if [[ "$line" == *"listening at bore.pub:"* ]]; then
+                  PORT=$(echo "$line" | grep -oP 'bore\.pub:\K\d+')
+                  echo "============================================"
+                  echo "✅ RW-HPS сервер доступен: bore.pub:$PORT"
+                  echo "============================================"
+                fi
+              done
+              echo "$(date) - Bore exited, restarting in 5s..."
+              sleep 5
+            done
+          ) &
+          sleep 10
+          echo "Туннель запущен."
 
-      - name: Keep alive (6 hours)
-        run: Start-Sleep -Seconds 21600
+      - name: Keep alive (6h)
+        run: sleep 6h
 
       - name: Upload logs
         if: always()
@@ -77,7 +95,5 @@ jobs:
           name: server-logs
           path: |
             RW-HPS/server.log
-            RW-HPS/server-error.log
-            bore.log
-            bore-error.log
             RW-HPS/data/logs/
+            RW-HPS/data/BindConfig.json
