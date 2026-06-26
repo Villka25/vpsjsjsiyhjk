@@ -26,7 +26,7 @@ jobs:
           ls -la RW-HPS
           cat RW-HPS/start.bat || echo "start.bat not found"
 
-      - name: Create missing BindConfig.json
+      - name: Create BindConfig.json
         run: |
           mkdir -p RW-HPS/data
           cat > RW-HPS/data/BindConfig.json << EOF
@@ -47,7 +47,8 @@ jobs:
             exit 1
           fi
           echo "✅ Found JAR: $JAR"
-          ( echo "start"; exec cat ) | nohup java -Djava.net.preferIPv4Stack=true -Xmx2G -jar "$JAR" --agree > server.log 2>&1 &
+          # Отправляем команду start, затем tail -f /dev/null держит пайп открытым
+          ( echo "start"; tail -f /dev/null ) | nohup java -Djava.net.preferIPv4Stack=true -Xmx2G -jar "$JAR" --agree > server.log 2>&1 &
           sleep 30
           ss -tlnp | grep 5123 && echo "✅ Port 5123 is listening" || echo "⚠️ Port not yet open"
           tail -50 server.log
