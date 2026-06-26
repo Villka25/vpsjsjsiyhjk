@@ -1,0 +1,83 @@
+name: RW-HPS Server (Windows + start.bat)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Download & extract RW-HPS
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/RW-HPS/RW-HPS/releases/download/v3.0.0/3.0.0.zip" -OutFile "RW-HPS.zip"
+          Expand-Archive -Path "RW-HPS.zip" -DestinationPath "RW-HPS"
+          cd RW-HPS
+          # Если внутри есть папка 3.0.0, перемещаем содержимое
+          if (Test-Path "3.0.0") {
+            Move-Item -Path "3.0.0\*" -Destination "." -Force
+            Remove-Item -Path "3.0.0" -Recurse
+          }
+          Get-ChildItem
+          # Показываем содержимое start.bat для информации
+          Get-Content start.bat
+
+      - name: Start server via start.bat (background)
+        run: |
+          cd RW-HPS
+          # Запускаем start.bat в фоне, перенаправляя вывод в файл
+          Start-Process -NoNewWindow -FilePath "cmd.exe" -ArgumentList "/c start.bat" -RedirectStandardOutput "server.log" -RedirectStandardError "server-error.log"
+          # Даём время на инициализацию
+          Start-Sleep -Seconds 30
+          # Проверяем, слушается ли порт 5123
+          netstat -ano | findstr 5123
+          # Показываем последние 30 строк лога
+          Get-Content server.log -Tail 30
+
+      - name: Install bore (Windows)
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
+          Expand-Archive -Path "bore.zip" -DestinationPath "bore"
+          # Добавляем папку bore в PATH
+          echo "$env:GITHUB_WORKSPACE\bore" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Start bore tunnel (Windows)
+        run: |
+          cd bore
+          # Запускаем bore в фоне
+          Start-Process -NoNewWindow -FilePath ".\bore.exe" -ArgumentList "local 5123 --to bore.pub" -RedirectStandardOutput "..\bore.log" -RedirectStandardError "..\bore-error.log"
+          Start-Sleep -Seconds 15
+          # Показываем лог туннеля
+          Get-Content ..\bore.log -ErrorAction SilentlyContinue
+          # Пытаемся извлечь порт
+          $log = Get-Content ..\bore.log -Raw
+          if ($log -match 'listening at bore\.pub:(\d+)') {
+            $port = $matches[1]
+            Write-Host "============================================"
+            Write-Host "✅ RW-HPS сервер доступен: bore.pub:$port"
+            Write-Host "============================================"
+          } else {
+            Write-Host "⚠️ Адрес туннеля не найден, проверьте bore.log"
+          }
+
+      - name: Keep alive (6 hours)
+        run: Start-Sleep -Seconds 21600
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            RW-HPS/server.log
+            RW-HPS/server-error.log
+            bore.log
+            bore-error.log
+            RW-HPS/data/logs/
