@@ -38,7 +38,7 @@ jobs:
           echo "✅ BindConfig.json created:"
           cat RW-HPS/data/BindConfig.json
 
-      - name: Start RW-HPS server
+      - name: Start RW-HPS server (with start command)
         run: |
           cd RW-HPS
           JAR=$(find . -name "Server-All.jar" | head -1)
@@ -47,10 +47,9 @@ jobs:
             exit 1
           fi
           echo "✅ Found JAR: $JAR"
-          # Добавляем -Djava.net.preferIPv4Stack=true и --agree
-          nohup java -Djava.net.preferIPv4Stack=true -Xmx2G -jar "$JAR" --agree < /dev/null > server.log 2>&1 &
+          # Подаём команду "start" и держим stdin открытым через cat
+          ( echo "start"; cat ) | nohup java -Djava.net.preferIPv4Stack=true -Xmx2G -jar "$JAR" --agree > server.log 2>&1 &
           sleep 30
-          # Проверяем порт
           ss -tlnp | grep 5123 && echo "✅ Port 5123 is listening" || echo "⚠️ Port not yet open"
           tail -50 server.log
           pgrep -f Server-All.jar && echo "✅ Server process is alive" || echo "❌ Server process died"
